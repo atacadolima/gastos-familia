@@ -311,6 +311,8 @@ function abrirLanc(l) {
   };
   const comoSel = h('select', {}, opcoes([['Gasto', 'Gasto'], ['Receita', 'Receita (entrada)'], ['Entre contas', 'Transferência entre contas / não conta'], ['Detalhe', 'Detalhe (não soma)']], l.conta_como));
   const obs = h('textarea', { placeholder: 'ex.: lavagem do carro' }, l.observacao || '');
+  const nome = h('input', { value: l.descricao || '', placeholder: 'ex.: Padaria do Zé' });
+  const generico = /^(DEBITO DE CARTAO|itau|Saída na conta)$/i.test((l.descricao || '').trim());
   const sempre = h('input', { type: 'checkbox', checked: !l.categoria_id });
   const padrao = h('input', { value: padraoSugerido(l.descricao), 'aria-label': 'Trecho do nome' });
   const blocoRegra = h('div', { class: 'card', style: 'gap:6px' },
@@ -337,7 +339,7 @@ function abrirLanc(l) {
     try {
       const sel = selecionados();
       if (!porCat && !sel.length) { salvar.disabled = false; toast('Marque pelo menos uma pessoa.'); return; }
-      const upd = { conta_como: comoSel.value, pessoa_id: porCat ? l.pessoa_id : sel[0], observacao: obs.value.trim() || null,
+      const upd = { descricao: nome.value.trim() || l.descricao, conta_como: comoSel.value, pessoa_id: porCat ? l.pessoa_id : sel[0], observacao: obs.value.trim() || null,
         categoria_id: comoSel.value === 'Gasto' && catSel.value ? Number(catSel.value) : null, atualizado_em: new Date().toISOString() };
       const r = await sb.from('lancamentos').update(upd).eq('id', l.id);
       if (r.error) throw r.error;
@@ -381,6 +383,7 @@ function abrirLanc(l) {
       l.total_parcelas > 1 ? h('div', { class: 'lin' }, h('span', {}, 'Parcela'), h('span', {}, `${l.parcela}/${l.total_parcelas}`)) : null,
       h('div', { class: 'nota' }, l.conferido ? (l.aviso_id ? 'Conferido: veio pelo aviso e pelo banco.' : 'Veio pelo banco (Open Finance).')
         : 'Veio só pelo aviso do celular; o banco ainda não confirmou.')),
+    h('label', { class: 'campo' }, generico ? 'Nome (o banco não informou a loja — escreva onde foi)' : 'Nome', nome),
     h('label', { class: 'campo' }, 'Entra como', comoSel),
     h('label', { class: 'campo' }, 'Categoria', catSel),
     blocoRegra,
