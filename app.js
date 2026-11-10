@@ -488,6 +488,13 @@ async function telaConferencia(wrap) {
     await carregarMes(); render();
   } }, 'Ler os bancos agora');
   cardF.append(btnSync, h('div', { class: 'nota' }, 'Os bancos são lidos sozinhos às 6h20 e às 18h20. O leitor do celular manda os avisos na hora em que chegam.'));
+  if (window.GastosAndroid) {
+    let info = {};
+    try { info = JSON.parse(window.GastosAndroid.status()); } catch {}
+    cardF.append(h('div', { class: 'lin' }, h('span', {}, 'Leitor neste celular'),
+      h('span', { class: 'status ' + (info.ligado ? 'ok' : 'err') }, info.ligado ? `${info.pendentes || 0} aguardando envio` : 'desligado')),
+      h('button', { class: 'btn sec', onclick: () => window.GastosAndroid.abrirLeitor() }, 'Abrir o leitor de avisos'));
+  }
   corpo.append(cardF);
 
   const L = lancs.data;
@@ -594,6 +601,12 @@ async function iniciar() {
 }
 
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharSheet(); });
+// Botão "voltar" do Android: fecha a janela aberta ou volta para o Início
+window.voltarApp = () => {
+  if (!document.getElementById('sheet').hidden) { fecharSheet(); return true; }
+  if (st.cad && st.aba !== 'inicio') { st.aba = 'inicio'; render(); return true; }
+  return false;
+};
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && st.cad) { try { await carregarMes(); render(); } catch {} }
 });
