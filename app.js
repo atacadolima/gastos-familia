@@ -102,6 +102,17 @@ function porcoes(lancs) {
   }
   return out;
 }
+/** Divisão só entre pessoas (mesma categoria em todas as partes) — feita pelos quadradinhos de "Quem". */
+function divisaoPorPessoa(l) {
+  const ps = partesDe(l);
+  return ps.length > 1 && ps.every((p) => p.categoria_id === ps[0].categoria_id) && new Set(ps.map((p) => p.pessoa_id)).size === ps.length;
+}
+const divisaoPorCategoria = (l) => partesDe(l).length > 0 && !divisaoPorPessoa(l);
+/** Divide em centavos iguais; a sobra vai para os primeiros. */
+function dividirIgual(total, n) {
+  const c = Math.round(total * 100), base = Math.floor(c / n), sobra = c - base * n;
+  return Array.from({ length: n }, (_, i) => (base + (i < sobra ? 1 : 0)) / 100);
+}
 const pendente = (l) => l.conta_como === 'Gasto' && !l.categoria_id && !partesDe(l).length;
 
 // ---------- telas ----------
@@ -162,11 +173,12 @@ async function telaInicio(wrap) {
   const cardP = h('div', { class: 'card' }, h('h2', {}, 'Quem gastou'));
   for (const pe of st.cad.pessoas) {
     const v = num(porPessoa[pe.id] || 0);
+    if (pe.id === 'outros' && !v) continue;
     const pct = total ? Math.round((v / total) * 100) : 0;
     cardP.append(h('div', {},
       h('div', { class: 'lin' }, h('span', {}, pe.nome), h('span', { class: 'v' }, R(v))),
       h('div', { class: 'barra', role: 'img', 'aria-label': `${pct}% do total` },
-        h('div', { style: `width:${pct}%;background:${pe.id === 'helene' ? 'var(--helene)' : pe.id === 'gabriel' ? '#4A6072' : 'var(--verde)'}` }))));
+        h('div', { style: `width:${pct}%;background:${pe.id === 'helene' ? 'var(--helene)' : pe.id === 'gabriel' ? '#4A6072' : pe.id === 'outros' ? '#8A8F8B' : 'var(--verde)'}` }))));
   }
   corpo.append(cardP);
 
@@ -239,7 +251,9 @@ function telaLancamentos(wrap) {
 
 function itemLanc(l) {
   const ps = partesDe(l);
-  const cat = ps.length ? `Dividido em ${ps.length}` : l.conta_como === 'Gasto' ? nomeCat(l.categoria_id) : l.conta_como;
+  const porPes = divisaoPorPessoa(l);
+  const cat = ps.length && !porPes ? `Dividido em ${ps.length}` : l.conta_como === 'Gasto' ? nomeCat(l.categoria_id) : l.conta_como;
+  const quem = porPes ? ps.map((p) => nomePessoa(p.pessoa_id)).join(', ') : nomePessoa(l.pessoa_id);
   const fim = l.final_cartao ? ` ${l.final_cartao}` : '';
   const ab = abastDe(l);
   const classeV = l.conta_como === 'Receita' ? 'v rec' : l.conta_como === 'Gasto' ? 'v' : 'v neu';
@@ -249,7 +263,7 @@ function itemLanc(l) {
   if (l.total_parcelas > 1) tags.push(h('span', { class: 'tag' }, `parcela ${l.parcela}/${l.total_parcelas}`));
   return h('button', { class: 'item' + (pendente(l) ? ' pend' : ''), onclick: () => abrirLanc(l) },
     h('div', { class: 't' }, h('span', { class: 'n' }, l.descricao || l.tipo), h('span', { class: classeV }, (l.conta_como === 'Receita' ? '+ ' : '') + R(l.valor))),
-    h('div', { class: 'd' }, `${hora(l.data_hora)} · ${cat} · ${l.banco || ''}${fim} · ${nomePessoa(l.pessoa_id)}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
+    h('div', { class: 'd' }, `${hora(l.data_hora)} · ${cat} · ${l.banco || ''}${fim} · ${quem}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
     tags.length ? h('div', {}, tags) : null,
     l.observacao ? h('div', { class: 'd' }, `“${l.observacao}”`) : null);
 }
@@ -276,7 +290,25 @@ function padraoSugerido(desc) {
 
 function abrirLanc(l) {
   const catSel = h('select', {}, opcoes(st.cad.categorias.map((c) => [c.id, c.nome]), l.categoria_id, 'A categorizar'));
-  const pesSel = h('select', {}, opcoes(st.cad.pessoas.map((p) => [p.id, p.nome]), l.pessoa_id));
+  const porCat = divisaoPorCategoria(l);
+  const marcados = new Set(divisaoPorPessoa(l) ? partesDe(l).map((p) => p.pessoa_id) : [l.pessoa_id || 'daniel']);
+  const parteOutro = partesDe(l).find((p) => p.pessoa_id === 'outros');
+  const outroNome = h('input', { value: (parteOutro && parteOutro.observacao) || '', placeholder: 'Quem? ex.: sogra (opcional)', 'aria-label': 'Nome de quem mais estava' });
+  const cadaUm = h('div', { class: 'nota' });
+  const caixas = st.cad.pessoas.map((p) => {
+    const cb = h('input', { type: 'checkbox', checked: marcados.has(p.id), value: p.id });
+    cb.onchange = () => atualizaQuem();
+    return cb;
+  });
+  const blocoQuem = h('div', { class: 'card', style: 'gap:2px' }, h('h2', {}, 'Quem gastou (pode marcar mais de um)'),
+    h('div', { class: 'grade2', style: 'gap:0 10px' }, caixas.map((cb, i) => h('label', { class: 'check' }, cb, st.cad.pessoas[i].id === 'outros' ? 'Outro' : st.cad.pessoas[i].nome))),
+    h('div', { class: 'campo' }, outroNome), cadaUm);
+  const selecionados = () => caixas.filter((c) => c.checked).map((c) => c.value);
+  const atualizaQuem = () => {
+    const sel = selecionados();
+    outroNome.parentElement.hidden = !sel.includes('outros');
+    cadaUm.textContent = sel.length > 1 ? `Dividido igual: ${R(dividirIgual(Number(l.valor), sel.length)[sel.length - 1])} para cada um.` : '';
+  };
   const comoSel = h('select', {}, opcoes([['Gasto', 'Gasto'], ['Receita', 'Receita (entrada)'], ['Entre contas', 'Transferência entre contas / não conta'], ['Detalhe', 'Detalhe (não soma)']], l.conta_como));
   const obs = h('textarea', { placeholder: 'ex.: lavagem do carro' }, l.observacao || '');
   const sempre = h('input', { type: 'checkbox', checked: !l.categoria_id });
@@ -303,10 +335,23 @@ function abrirLanc(l) {
   const salvar = h('button', { class: 'btn', onclick: async () => {
     salvar.disabled = true;
     try {
-      const upd = { conta_como: comoSel.value, pessoa_id: pesSel.value, observacao: obs.value.trim() || null,
+      const sel = selecionados();
+      if (!porCat && !sel.length) { salvar.disabled = false; toast('Marque pelo menos uma pessoa.'); return; }
+      const upd = { conta_como: comoSel.value, pessoa_id: porCat ? l.pessoa_id : sel[0], observacao: obs.value.trim() || null,
         categoria_id: comoSel.value === 'Gasto' && catSel.value ? Number(catSel.value) : null, atualizado_em: new Date().toISOString() };
       const r = await sb.from('lancamentos').update(upd).eq('id', l.id);
       if (r.error) throw r.error;
+      if (!porCat) {
+        // "Quem": uma pessoa = sem partes; várias = partes iguais
+        const d = await sb.from('partes').delete().eq('lancamento_id', l.id);
+        if (d.error) throw d.error;
+        if (sel.length > 1 && upd.conta_como === 'Gasto') {
+          const vals = dividirIgual(Number(l.valor), sel.length);
+          const ins = await sb.from('partes').insert(sel.map((pid, i) => ({ lancamento_id: l.id, categoria_id: upd.categoria_id, pessoa_id: pid,
+            valor: vals[i], observacao: pid === 'outros' ? (outroNome.value.trim() || null) : null })));
+          if (ins.error) throw ins.error;
+        }
+      }
       let extras = 0;
       if (!blocoRegra.hidden && sempre.checked && padrao.value.trim().length >= 3) {
         const p = padrao.value.trim().toLowerCase();
@@ -339,19 +384,19 @@ function abrirLanc(l) {
     h('label', { class: 'campo' }, 'Entra como', comoSel),
     h('label', { class: 'campo' }, 'Categoria', catSel),
     blocoRegra,
-    h('label', { class: 'campo' }, 'Quem gastou', pesSel),
+    porCat ? h('div', { class: 'nota' }, 'Quem gastou está definido em cada parte da divisão.') : blocoQuem,
     blocoComb,
     h('label', { class: 'campo' }, 'Observação', obs),
-    ps.length ? h('div', { class: 'card', style: 'gap:6px' }, h('h2', {}, `Dividido em ${ps.length} partes`),
+    porCat ? h('div', { class: 'card', style: 'gap:6px' }, h('h2', {}, `Dividido em ${ps.length} partes`),
       ps.map((p) => h('div', { class: 'lin' }, h('span', {}, `${nomeCat(p.categoria_id)} · ${nomePessoa(p.pessoa_id || l.pessoa_id)}`), h('span', { class: 'v' }, R(p.valor))))) : null,
     h('div', { class: 'btns' }, salvar,
-      comoSel.value === 'Gasto' ? h('button', { class: 'btn sec', onclick: () => abrirDivisao(l) }, ps.length ? 'Editar divisão' : 'Dividir') : null));
-  mostrar();
+      comoSel.value === 'Gasto' ? h('button', { class: 'btn sec', onclick: () => abrirDivisao(l) }, porCat ? 'Editar divisão' : 'Dividir por categoria') : null));
+  mostrar(); atualizaQuem();
 }
 
 function abrirDivisao(l) {
   const total = num(l.valor);
-  let linhas = partesDe(l).map((p) => ({ cat: p.categoria_id, pessoa: p.pessoa_id || l.pessoa_id, valor: Number(p.valor) }));
+  let linhas = (divisaoPorCategoria(l) ? partesDe(l) : []).map((p) => ({ cat: p.categoria_id, pessoa: p.pessoa_id || l.pessoa_id, valor: Number(p.valor) }));
   if (!linhas.length) linhas = [{ cat: l.categoria_id, pessoa: l.pessoa_id, valor: total }, { cat: null, pessoa: l.pessoa_id, valor: 0 }];
   const lista = h('div', { style: 'display:flex;flex-direction:column;gap:8px' });
   const falta = h('div', { class: 'lin' });
@@ -395,7 +440,7 @@ function abrirDivisao(l) {
     h('button', { class: 'btn sec', onclick: () => { linhas.push({ cat: null, pessoa: l.pessoa_id, valor: 0 }); desenhar(); } }, '+ Adicionar parte'),
     h('div', { class: 'card' }, falta),
     h('div', { class: 'btns' }, salvar,
-      partesDe(l).length ? h('button', { class: 'btn perigo', onclick: async () => {
+      divisaoPorCategoria(l) ? h('button', { class: 'btn perigo', onclick: async () => {
         await sb.from('partes').delete().eq('lancamento_id', l.id); fecharSheet(); await carregarMes(); render(); toast('Divisão desfeita.');
       } }, 'Desfazer divisão') : null));
   desenhar();
