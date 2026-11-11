@@ -1,0 +1,7 @@
+project_id = "gastos-familia"
+
+[functions.aviso]
+verify_jwt = false
+
+[functions.sync-pluggy]
+verify_jwt = false
