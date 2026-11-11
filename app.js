@@ -541,7 +541,9 @@ async function telaConferencia(wrap) {
     try { info = JSON.parse(window.GastosAndroid.status()); } catch {}
     cardF.append(h('div', { class: 'lin' }, h('span', {}, 'Leitor neste celular'),
       h('span', { class: 'status ' + (info.ligado ? 'ok' : 'err') }, info.ligado ? `${info.pendentes || 0} aguardando envio` : 'desligado')),
-      h('button', { class: 'btn sec', onclick: () => window.GastosAndroid.abrirLeitor() }, 'Abrir o leitor de avisos'));
+      h('button', { class: 'btn sec', onclick: () => window.GastosAndroid.abrirLeitor() }, 'Abrir o leitor de avisos'),
+      window.GastosAndroid.verificarAtualizacao ? h('button', { class: 'btn sec', onclick: () => window.GastosAndroid.verificarAtualizacao() },
+        `Procurar atualização do app (versão instalada: ${window.GastosAndroid.versao ? window.GastosAndroid.versao() : '?'})`) : null);
   }
   corpo.append(cardF);
 
