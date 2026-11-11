@@ -178,7 +178,7 @@ async function telaInicio(wrap) {
     cardP.append(h('div', {},
       h('div', { class: 'lin' }, h('span', {}, pe.nome), h('span', { class: 'v' }, R(v))),
       h('div', { class: 'barra', role: 'img', 'aria-label': `${pct}% do total` },
-        h('div', { style: `width:${pct}%;background:${pe.id === 'helene' ? 'var(--helene)' : pe.id === 'gabriel' ? '#4A6072' : pe.id === 'outros' ? '#8A8F8B' : 'var(--verde)'}` }))));
+        h('div', { style: `width:${pct}%;background:${pe.id === 'helene' ? 'var(--helene)' : pe.id === 'gabriel' ? '#4A6072' : pe.id === 'outros' ? '#8A8F8B' : pe.id === 'familia' ? '#2E7D9A' : 'var(--verde)'}` }))));
   }
   corpo.append(cardP);
 
