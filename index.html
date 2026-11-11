@@ -13,14 +13,27 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=7">
+<link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
 <div id="app" aria-live="polite"></div>
 <div id="sheet-fundo" class="sheet-fundo" hidden></div>
 <div id="sheet" class="sheet" role="dialog" aria-modal="true" hidden></div>
 <div id="toast" class="toast" role="status" hidden></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.min.js"></script>
-<script src="app.js?v=7"></script>
+<script>
+// Se algo falhar ao carregar, mostra o erro em vez de tela branca
+window.addEventListener('unhandledrejection', function (e) {
+  var r = e.reason || {}; window.dispatchEvent(new ErrorEvent('error', { message: 'Falha ao carregar: ' + (r.message || r) }));
+});
+window.addEventListener('error', function (e) {
+  var app = document.getElementById('app');
+  if (app && !app.children.length) {
+    app.innerHTML = '<div style="padding:40px 24px;font-family:sans-serif"><h2>Não consegui abrir o app</h2><p style="color:#B3261E"></p><button style="min-height:44px;padding:0 20px;border-radius:10px;border:none;background:#1F5C4A;color:#fff;font-size:16px" onclick="location.reload()">Tentar de novo</button></div>';
+    app.querySelector('p').textContent = (e.message || 'erro') + ' ' + (e.filename ? e.filename.split('/').pop() : '');
+  }
+});
+</script>
+<script src="vendor/supabase.min.js?v=2.50.0"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
