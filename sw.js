@@ -1,6 +1,6 @@
 // Guarda só as telas do app para abrir rápido. Os dados vêm sempre da internet.
-const VERSAO = 'gastos-v6';
-const TELAS = ['./', 'index.html', 'styles.css?v=6', 'app.js?v=6', 'manifest.webmanifest', 'icons/icon-192.png'];
+const VERSAO = 'gastos-v7';
+const TELAS = ['./', 'index.html', 'styles.css?v=7', 'app.js?v=7', 'manifest.webmanifest', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSAO).then((c) => c.addAll(TELAS)).then(() => self.skipWaiting()));

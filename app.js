@@ -117,9 +117,10 @@ const pendente = (l) => l.conta_como === 'Gasto' && !l.categoria_id && !partesDe
 
 // ---------- telas ----------
 function render() {
+  if (st.papel === 'compras') return telaComprasSimples();
   const app = document.getElementById('app');
   app.replaceChildren();
-  const tela = { inicio: telaInicio, lanc: telaLancamentos, carro: telaCarro, conf: telaConferencia }[st.aba];
+  const tela = { inicio: telaInicio, lanc: telaLancamentos, compras: telaCompras, carro: telaCarro, conf: telaConferencia }[st.aba];
   const wrap = h('div', { class: 'app' });
   app.append(wrap);
   Promise.resolve(tela(wrap)).catch((e) => wrap.append(h('div', { class: 'corpo' }, h('div', { class: 'card erro' }, 'Erro: ' + erroMsg(e)))));
@@ -130,11 +131,12 @@ const ICONES = {
   inicio: 'M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
   lanc: 'M4 6h16M4 12h16M4 18h10',
   carro: 'M5 16l1.5-5A2 2 0 0 1 8.4 9.5h7.2a2 2 0 0 1 1.9 1.5L19 16M4 16h16v3h-2M4 16v3h2M7.5 16.5h.01M16.5 16.5h.01',
+  compras: 'M3 4h2l2.4 11.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.8L20 8H6.2M9 20h.01M17 20h.01',
   conf: 'M9 12l2 2 4-4M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z',
 };
 function navegacao() {
   const nav = h('nav', { class: 'tabs', 'aria-label': 'Telas' });
-  for (const [id, rot] of [['inicio', 'Início'], ['lanc', 'Lançamentos'], ['carro', 'Carro'], ['conf', 'Conferência']]) {
+  for (const [id, rot] of [['inicio', 'Início'], ['lanc', 'Lançamentos'], ['compras', 'Compras'], ['carro', 'Carro'], ['conf', 'Conferência']]) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
     svg.setAttribute('stroke-width', '1.8'); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
@@ -575,6 +577,184 @@ async function telaConferencia(wrap) {
     h('button', { class: 'btn perigo', onclick: async () => { await sb.auth.signOut(); location.reload(); } }, 'Sair')));
 }
 
+// ---------- Compras ----------
+const GRUPOS = ['Mercado', 'Limpeza', 'Higiene', 'Farmácia', 'Gabriel', 'Casa', 'Outros'];
+const PALAVRAS = {
+  Limpeza: ['desinfetante', 'saco de lixo', 'detergente', 'sabão', 'sabao', 'amaciante', 'água sanitária', 'agua sanitaria', 'esponja', 'multiuso', 'limpa', 'vassoura', 'rodo', 'pano', 'álcool', 'alcool', 'cloro', 'veja', 'lustra', 'inseticida'],
+  Higiene: ['papel higiênico', 'papel higienico', 'pasta de dente', 'creme dental', 'escova', 'shampoo', 'xampu', 'condicionador', 'sabonete', 'desodorante', 'absorvente', 'fio dental', 'cotonete', 'barbear'],
+  Farmácia: ['remédio', 'remedio', 'dipirona', 'paracetamol', 'vitamina', 'curativo', 'band-aid', 'termômetro', 'soro'],
+  Gabriel: ['fralda', 'lenço umedecido', 'lenco umedecido', 'pomada', 'mamadeira', 'chupeta', 'leite em pó', 'leite em po', 'papinha', 'gabriel'],
+  Casa: ['lâmpada', 'lampada', 'pilha', 'gás', 'gas ', 'filtro', 'tomada', 'extensão'],
+};
+const semAcento = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+function grupoDe(nome) {
+  const n = semAcento(nome);
+  for (const [g, ps] of Object.entries(PALAVRAS)) if (ps.some((p) => n.includes(semAcento(p)))) return g;
+  return 'Mercado';
+}
+const comp = { itens: [], membros: {}, sugest: [], canal: null, timer: null };
+const hojeISO = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString(); };
+const nomeMembro = (uid) => comp.membros[uid] || '—';
+const podeEditar = (it) => st.papel === 'completo' || it.criado_por === st.eu;
+
+async function carregarCompras() {
+  const [i, m, hist] = await Promise.all([
+    sb.from('compras_itens').select('*').or(`comprado_em.is.null,comprado_em.gte.${hojeISO()}`).order('criado_em'),
+    sb.from('membros').select('user_id, nome'),
+    sb.from('compras_itens').select('nome').not('comprado_em', 'is', null).order('comprado_em', { ascending: false }).limit(400),
+  ]);
+  for (const x of [i, m, hist]) if (x.error) throw x.error;
+  comp.itens = i.data; comp.em = Date.now();
+  comp.membros = Object.fromEntries(m.data.map((x) => [x.user_id, x.nome]));
+  const pend = new Set(comp.itens.filter((x) => !x.comprado_em).map((x) => semAcento(x.nome)));
+  const cont = {};
+  for (const x of hist.data) { const k = semAcento(x.nome); if (!pend.has(k)) (cont[k] = cont[k] || { n: 0, nome: x.nome }).n++; }
+  comp.sugest = Object.values(cont).filter((x) => x.n >= 2).sort((a, b) => b.n - a.n).slice(0, 6).map((x) => x.nome);
+}
+
+/** Atualiza a lista na hora quando outra pessoa mexe. */
+function assinarCompras() {
+  if (comp.canal) return;
+  comp.canal = sb.channel('compras').on('postgres_changes', { event: '*', schema: 'public', table: 'compras_itens' }, () => {
+    clearTimeout(comp.timer);
+    comp.timer = setTimeout(async () => {
+      if (st.papel === 'compras' || st.aba === 'compras') {
+        if (!document.getElementById('sheet').hidden) return; // não atrapalha quem está editando
+        await carregarCompras(); render();
+      }
+    }, 400);
+  }).subscribe();
+}
+
+async function adicionarItens(texto) {
+  const nomes = texto.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean).slice(0, 30);
+  if (!nomes.length) return false;
+  const r = await sb.from('compras_itens').insert(nomes.map((n) => ({ nome: n.slice(0, 120), grupo: grupoDe(n), criado_por: st.eu })));
+  if (r.error) { toast('Não adicionou: ' + erroMsg(r.error), 4000); return false; }
+  await carregarCompras(); render();
+  toast(nomes.length > 1 ? `${nomes.length} itens adicionados.` : 'Adicionado.');
+  return true;
+}
+
+async function marcar(it, comprado) {
+  const r = await sb.rpc('marcar_comprado', { item: it.id, comprado });
+  if (r.error) { toast('Não deu: ' + erroMsg(r.error), 4000); return; }
+  await carregarCompras(); render();
+}
+
+function linhaItem(it, grande) {
+  const cb = h('input', { type: 'checkbox', checked: !!it.comprado_em, 'aria-label': `Comprado: ${it.nome}`,
+    style: `width:${grande ? 26 : 22}px;height:${grande ? 26 : 22}px;accent-color:var(--verde);flex:none` });
+  cb.onchange = () => marcar(it, cb.checked);
+  const podeMarcar = st.papel === 'completo';
+  const feito = !!it.comprado_em;
+  const info = feito ? `${nomeMembro(it.comprado_por)}, ${hora(it.comprado_em)}` : nomeMembro(it.criado_por);
+  const texto = h('button', { class: 'item-nome', disabled: !podeEditar(it), onclick: () => editarItem(it),
+    style: `flex-grow:1;text-align:left;border:none;background:none;padding:6px 0;min-height:44px;font-size:${grande ? 17 : 16}px;${feito ? 'text-decoration:line-through;color:var(--suave)' : ''}` },
+    it.nome, it.quantidade ? h('span', { class: 'nota' }, ` · ${it.quantidade}`) : null,
+    it.observacao ? h('div', { class: 'nota' }, it.observacao) : null);
+  return h('div', { style: 'display:flex;align-items:center;gap:12px;border-bottom:1px solid #EEF0ED' },
+    podeMarcar ? cb : null, texto, h('span', { class: 'nota', style: 'white-space:nowrap' }, info));
+}
+
+function listaAgrupada(corpo, grande) {
+  const pend = comp.itens.filter((x) => !x.comprado_em);
+  const feitos = comp.itens.filter((x) => x.comprado_em);
+  if (!pend.length) corpo.append(h('div', { class: 'vazio' }, 'Nada na lista. 🎉'));
+  for (const g of GRUPOS) {
+    const doGrupo = pend.filter((x) => (GRUPOS.includes(x.grupo) ? x.grupo : 'Outros') === g);
+    if (!doGrupo.length) continue;
+    corpo.append(h('div', { class: 'card', style: 'gap:0;padding:6px 14px' }, h('div', { class: 'dia', style: 'padding:8px 0 2px' }, g),
+      doGrupo.map((it) => linhaItem(it, grande))));
+  }
+  if (feitos.length && st.papel === 'completo') {
+    corpo.append(h('div', { class: 'card', style: 'gap:0;padding:6px 14px;opacity:.8' }, h('div', { class: 'dia', style: 'padding:8px 0 2px' }, 'Comprado hoje'),
+      feitos.map((it) => linhaItem(it, grande))));
+  }
+}
+
+function campoAdicionar(grande) {
+  const inp = h('input', { placeholder: grande ? 'Escreva aqui: sabão em pó, esponja…' : 'Adicionar: leite, saco de lixo, detergente…',
+    'aria-label': 'Itens para adicionar', enterkeyhint: 'done', style: grande ? 'min-height:52px;font-size:17px' : '' });
+  const enviar = async () => { const ok = await adicionarItens(inp.value); if (ok) inp.value = ''; };
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); enviar(); } });
+  const btn = grande
+    ? h('button', { class: 'btn', style: 'min-height:52px;font-size:17px', onclick: enviar }, 'Adicionar na lista')
+    : h('button', { class: 'btn', 'aria-label': 'Adicionar', style: 'min-width:52px;font-size:20px', onclick: enviar }, '+');
+  return { inp, btn };
+}
+
+async function telaCompras(wrap) {
+  // Desenha na hora com o que já tem; se estiver velho, recarrega e redesenha uma vez
+  if (!comp.em) await carregarCompras();
+  else if (Date.now() - comp.em > 30000) setTimeout(async () => { await carregarCompras(); if (st.aba === 'compras') render(); }, 0);
+  assinarCompras();
+  const n = comp.itens.filter((x) => !x.comprado_em).length;
+  const { inp, btn } = campoAdicionar(false);
+  const cab = h('div', { class: 'cab' },
+    h('div', { class: 'lin' }, h('h1', {}, 'Compras'), h('span', { class: 'sub' }, n ? `${n} para comprar` : 'lista vazia')),
+    h('div', { style: 'display:flex;gap:8px' }, h('div', { class: 'campo', style: 'flex-grow:1' }, inp), btn));
+  if (comp.sugest.length) {
+    cab.append(h('div', { class: 'chips' }, h('span', { class: 'nota', style: 'align-self:center' }, 'Sempre compra:'),
+      comp.sugest.map((s) => h('button', { class: 'chip', style: 'border-style:dashed;color:var(--verde);border-color:var(--verde)',
+        onclick: () => adicionarItens(s) }, '+ ' + s))));
+  }
+  wrap.append(cab);
+  const corpo = h('div', { class: 'corpo', style: 'gap:10px' });
+  wrap.append(corpo);
+  listaAgrupada(corpo, false);
+  corpo.append(h('div', { class: 'nota', style: 'text-align:center' }, 'Toque no nome para editar. O quadradinho marca como comprado.'));
+}
+
+async function telaComprasSimples() {
+  if (!comp.em || Date.now() - comp.em > 30000) await carregarCompras();
+  assinarCompras();
+  const app = document.getElementById('app');
+  const wrap = h('div', { class: 'app', style: 'padding-bottom:24px' });
+  const { inp, btn } = campoAdicionar(true);
+  wrap.append(h('div', { class: 'hero' },
+    h('span', { class: 'rotulo' }, `Olá, ${st.meuNome}`),
+    h('span', { style: 'font-size:26px;font-weight:700' }, 'Lista de compras'),
+    h('span', { class: 'rotulo' }, 'Da casa do Daniel e da Helene')));
+  const corpo = h('div', { class: 'corpo' });
+  corpo.append(h('div', { class: 'card' }, h('span', { style: 'font-size:15px;font-weight:600' }, 'Está faltando alguma coisa?'),
+    h('div', { class: 'campo' }, inp), btn));
+  listaAgrupada(corpo, true);
+  corpo.append(h('div', { class: 'nota', style: 'text-align:center' }, 'Você pode editar ou apagar o que você mesma adicionou.'),
+    h('button', { class: 'btn perigo', onclick: async () => { await sb.auth.signOut(); location.reload(); } }, 'Sair'));
+  wrap.append(corpo);
+  app.replaceChildren(wrap);
+}
+
+function editarItem(it) {
+  if (!podeEditar(it)) return;
+  const nome = h('input', { value: it.nome, maxlength: '120' });
+  const qtd = h('input', { value: it.quantidade || '', placeholder: 'ex.: 2 pacotes' });
+  const obs = h('input', { value: it.observacao || '', placeholder: 'ex.: marca, cor, tamanho' });
+  const grupo = h('select', {}, opcoes(GRUPOS.map((g) => [g, g]), GRUPOS.includes(it.grupo) ? it.grupo : 'Outros'));
+  const salvar = h('button', { class: 'btn', onclick: async () => {
+    if (!nome.value.trim()) { toast('Escreva o nome do item.'); return; }
+    salvar.disabled = true;
+    const r = await sb.from('compras_itens').update({ nome: nome.value.trim(), quantidade: qtd.value.trim() || null,
+      observacao: obs.value.trim() || null, grupo: grupo.value }).eq('id', it.id);
+    if (r.error) { salvar.disabled = false; toast('Não salvou: ' + erroMsg(r.error), 4000); return; }
+    fecharSheet(); await carregarCompras(); render(); toast('Salvo.');
+  } }, 'Salvar');
+  let confirmar = false;
+  const apagar = h('button', { class: 'btn perigo', onclick: async () => {
+    if (!confirmar) { confirmar = true; apagar.textContent = 'Toque de novo para apagar'; return; }
+    const r = await sb.from('compras_itens').delete().eq('id', it.id);
+    if (r.error) { toast('Não apagou: ' + erroMsg(r.error), 4000); return; }
+    fecharSheet(); await carregarCompras(); render(); toast('Apagado.');
+  } }, 'Apagar');
+  abrirSheet(h('h3', {}, 'Editar item'),
+    h('label', { class: 'campo' }, 'Item', nome),
+    h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Quantidade', qtd), h('label', { class: 'campo' }, 'Grupo', grupo)),
+    h('label', { class: 'campo' }, 'Observação', obs),
+    h('div', { class: 'nota' }, `Pedido por ${nomeMembro(it.criado_por)} em ${dataCurta(it.criado_em)} ${hora(it.criado_em)}`),
+    h('div', { class: 'btns' }, salvar, apagar));
+}
+
 // ---------- login ----------
 function telaLogin(msg) {
   const email = h('input', { type: 'email', autocomplete: 'username', required: true });
@@ -634,13 +814,15 @@ async function iniciar() {
   const { data } = await sb.auth.getSession();
   if (!data.session) return telaLogin();
   if (criandoSenha) { criandoSenha = false; return telaCriarSenha(); }
-  const { data: m } = await sb.from('membros').select('nome').eq('user_id', data.session.user.id).maybeSingle();
+  const { data: m } = await sb.from('membros').select('nome, papel').eq('user_id', data.session.user.id).maybeSingle();
   if (!m) {
     telaLogin('Seu login ainda não foi liberado. Fale com o Daniel.');
     await sb.auth.signOut();
     return;
   }
+  st.eu = data.session.user.id; st.papel = m.papel; st.meuNome = m.nome;
   try {
+    if (st.papel === 'compras') return await telaComprasSimples();
     await carregarCadastros();
     await carregarMes();
     render();
@@ -658,7 +840,11 @@ window.voltarApp = () => {
   return false;
 };
 document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState === 'visible' && st.cad) { try { await carregarMes(); render(); } catch {} }
+  if (document.visibilityState !== 'visible') return;
+  try {
+    if (st.papel === 'compras') return await telaComprasSimples();
+    if (st.cad) { await carregarMes(); render(); }
+  } catch {}
 });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 // Deixa o supabase ler o link do e-mail antes de decidir a tela

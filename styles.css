@@ -75,8 +75,8 @@ label.campo { display: flex; flex-direction: column; gap: 4px; font-size: 12px; 
 .status.amb { color: var(--ambar); background: var(--ambar-fundo); }
 .status.err { color: var(--erro); background: #FBEAE9; }
 
-nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; background: var(--cartao); border-top: 1px solid var(--linha); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 4px 0 calc(8px + var(--base)); z-index: 5; }
-nav.tabs button { min-height: 52px; border: none; background: none; color: var(--suave); font-size: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
+nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; background: var(--cartao); border-top: 1px solid var(--linha); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 4px 0 calc(8px + var(--base)); z-index: 5; }
+nav.tabs button { min-height: 52px; border: none; background: none; color: var(--suave); font-size: 11px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
 nav.tabs button svg { width: 22px; height: 22px; }
 nav.tabs button.on { color: var(--verde); font-weight: 700; }
 
@@ -93,3 +93,4 @@ nav.tabs button.on { color: var(--verde); font-weight: 700; }
 .login .logo { width: 64px; height: 64px; border-radius: 16px; }
 .login h1 { margin: 0; font-size: 24px; }
 .erro { color: var(--erro); font-size: 14px; }
+.item-nome:disabled { color: inherit; cursor: default; opacity: 1; }
