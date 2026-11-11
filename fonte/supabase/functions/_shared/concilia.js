@@ -38,12 +38,12 @@ export function converter(tx, conta, banco) {
   };
 }
 
-const ENTRE_CONTAS_TXT = /pgto\.? fat|pagamento (de )?fatura|pagto\.? ?fatura|pag fatura|fatura cart|pagamento recebido|pagamento efetuado|aplica[cç][aã]o|resgate|invest|cdb|poupan[cç]a/i;
+const ENTRE_CONTAS_TXT = /d[ée]bito autom[áa]tico .*(black|cart|fatura|visa|master|personnalit)|pgto\.? ?cart[aã]o|pgto\.? fat|pagamento (de )?fatura|pagto\.? ?fatura|pag fatura|fatura cart|pagamento recebido|pagamento efetuado|aplica[cç][aã]o|resgate|invest|cdb|poupan[cç]a/i;
 
 /** Como uma transação do banco que não casou com nenhum aviso entra nas contas. */
 export function contaComo(t) {
   if (t.contraparte && ehTitular(t.contraparte)) return 'Entre contas';
-  if (ENTRE_CONTAS_TXT.test(t.descricao || '')) return 'Entre contas';
+  if (ENTRE_CONTAS_TXT.test(t.descricao || '') || ENTRE_CONTAS_TXT.test((t.bruto && t.bruto.description) || '')) return 'Entre contas';
   if (t.sentido === 'entrada') return t.conta_tipo === 'CREDIT' ? 'Entre contas' : 'Receita';
   return 'Gasto';
 }
