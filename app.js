@@ -10,7 +10,9 @@ const TZ = 'America/Sao_Paulo';
 const TIPO_LINK = new URLSearchParams(location.hash.slice(1)).get('type');
 
 const sb = window.supabase.createClient(SB_URL, SB_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' },
+  // lock simples: a trava padrão (navigator.locks) pode ficar presa dentro do app Android e deixar a tela em branco
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit',
+    lock: async (_nome, _espera, fn) => fn() },
 });
 
 const st = {
@@ -849,3 +851,13 @@ document.addEventListener('visibilitychange', async () => {
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 // Deixa o supabase ler o link do e-mail antes de decidir a tela
 setTimeout(iniciar, TIPO_LINK ? 400 : 0);
+// Se em 20 s nada apareceu, mostra aviso em vez de tela branca
+setTimeout(() => {
+  const app = document.getElementById('app');
+  if (app && !app.children.length) {
+    app.replaceChildren(h('div', { class: 'login' }, h('h1', {}, 'O app está demorando para abrir'),
+      h('p', { class: 'nota' }, 'Verifique a internet e tente de novo. Se continuar, avise o Daniel/Claude: "travou ao iniciar".'),
+      h('button', { class: 'btn', onclick: () => location.reload() }, 'Tentar de novo'),
+      h('button', { class: 'btn sec', onclick: async () => { try { localStorage.clear(); } catch {} location.reload(); } }, 'Entrar de novo (limpar login)')));
+  }
+}, 20000);
