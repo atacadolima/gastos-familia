@@ -162,44 +162,57 @@ function seletorMes(aoMudar) {
 
 // ----- Início -----
 async function telaInicio(wrap) {
-  const ps = porcoes(st.lancs);
+  const todas = porcoes(st.lancs);
+  const totalFamilia = num(todas.reduce((s, p) => s + p.valor, 0));
+  const filtro = st.filtroInicio || null;
+  const ps = filtro ? todas.filter((p) => (p.pessoa || 'daniel') === filtro) : todas;
   const total = num(ps.reduce((s, p) => s + p.valor, 0));
   const receitas = num(st.lancs.filter((l) => l.conta_como === 'Receita').reduce((s, l) => s + Number(l.valor), 0));
+  const filtrar = (id) => { st.filtroInicio = st.filtroInicio === id ? null : id; render(); };
 
   wrap.append(h('div', { class: 'hero' },
-    h('div', { class: 'linha1' }, seletorMes(render), h('span', { class: 'rotulo' }, 'Família')),
-    h('span', { class: 'rotulo' }, 'Gasto no mês'),
+    h('div', { class: 'linha1' }, seletorMes(render), h('span', { class: 'rotulo' }, filtro ? nomePessoa(filtro) : 'Família')),
+    h('span', { class: 'rotulo' }, filtro ? `Gasto de ${nomePessoa(filtro)} no mês` : 'Gasto no mês'),
     h('span', { class: 'grande' }, R(total)),
-    h('span', { class: 'rotulo' }, `Entradas no mês: ${R(receitas)}`)));
+    h('span', { class: 'rotulo' }, filtro ? `de ${R(totalFamilia)} da família` : `Entradas no mês: ${R(receitas)}`)));
   const corpo = h('div', { class: 'corpo' });
   wrap.append(corpo);
+  if (filtro) {
+    corpo.append(h('div', { class: 'card', style: 'flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--verde-claro)' },
+      h('span', {}, 'Mostrando: ', h('b', {}, nomePessoa(filtro))),
+      h('button', { class: 'btn sec', style: 'min-height:40px', onclick: () => filtrar(filtro) }, 'Ver todos')));
+  }
 
-  // Quem gastou
+  // Quem gastou (toque no nome para filtrar)
   const porPessoa = {};
-  for (const p of ps) porPessoa[p.pessoa || 'daniel'] = (porPessoa[p.pessoa || 'daniel'] || 0) + p.valor;
-  const cardP = h('div', { class: 'card' }, h('h2', {}, 'Quem gastou'));
+  for (const p of todas) porPessoa[p.pessoa || 'daniel'] = (porPessoa[p.pessoa || 'daniel'] || 0) + p.valor;
+  const cardP = h('div', { class: 'card' }, h('h2', {}, 'Quem gastou'), h('div', { class: 'nota', style: 'margin-top:-6px' }, 'Toque num nome para ver só os gastos dele.'));
+  const cor = (id) => (id === 'helene' ? 'var(--helene)' : id === 'gabriel' ? '#4A6072' : id === 'outros' ? '#8A8F8B' : id === 'familia' ? '#2E7D9A' : 'var(--verde)');
   for (const pe of st.cad.pessoas) {
     const v = num(porPessoa[pe.id] || 0);
-    if (pe.id === 'outros' && !v) continue;
-    const pct = total ? Math.round((v / total) * 100) : 0;
-    cardP.append(h('div', {},
-      h('div', { class: 'lin' }, h('span', {}, pe.nome), h('span', { class: 'v' }, R(v))),
-      h('div', { class: 'barra', role: 'img', 'aria-label': `${pct}% do total` },
-        h('div', { style: `width:${pct}%;background:${pe.id === 'helene' ? 'var(--helene)' : pe.id === 'gabriel' ? '#4A6072' : pe.id === 'outros' ? '#8A8F8B' : pe.id === 'familia' ? '#2E7D9A' : 'var(--verde)'}` }))));
+    if ((pe.id === 'outros' || pe.id === 'familia') && !v) continue;
+    const pct = totalFamilia ? Math.round((v / totalFamilia) * 100) : 0;
+    const ativo = filtro === pe.id;
+    cardP.append(h('button', { 'aria-pressed': String(ativo), onclick: () => filtrar(pe.id),
+      style: `display:flex;flex-direction:column;gap:4px;width:100%;text-align:left;border-radius:10px;padding:8px;margin:0 -8px;width:calc(100% + 16px);
+        border:1px solid ${ativo ? 'var(--verde)' : 'transparent'};background:${ativo ? 'var(--verde-claro)' : 'transparent'};opacity:${filtro && !ativo ? '.55' : '1'}` },
+      h('div', { class: 'lin', style: 'width:100%' }, h('span', { style: ativo ? 'font-weight:700' : '' }, pe.nome), h('span', { class: 'v' }, R(v))),
+      h('div', { class: 'barra', style: 'width:100%', role: 'img', 'aria-label': `${pct}% do total` },
+        h('div', { style: `width:${pct}%;background:${cor(pe.id)}` }))));
   }
   corpo.append(cardP);
 
-  // Por categoria
+  // Por categoria (respeita o filtro)
   const porCat = {};
   for (const p of ps) porCat[p.cat || 0] = (porCat[p.cat || 0] || 0) + p.valor;
   const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
-  const cardC = h('div', { class: 'card' }, h('h2', {}, 'Por categoria'));
-  if (!cats.length) cardC.append(h('div', { class: 'vazio' }, 'Nenhum gasto neste mês.'));
-  const nPend = st.lancs.filter(pendente).length;
+  const cardC = h('div', { class: 'card' }, h('h2', {}, filtro ? `Por categoria · ${nomePessoa(filtro)}` : 'Por categoria'));
+  if (!cats.length) cardC.append(h('div', { class: 'vazio' }, filtro ? 'Nenhum gasto dessa pessoa neste mês.' : 'Nenhum gasto neste mês.'));
+  const nPend = new Set(ps.filter((p) => !p.cat && pendente(p.l)).map((p) => p.l.id)).size;
   for (const [id, v] of cats) {
     const pend = id === '0';
     cardC.append(h('button', { class: 'lin', style: 'border:none;background:none;padding:2px 0;text-align:left;min-height:32px',
-      onclick: () => { st.aba = 'lanc'; st.soPendentes = pend; render(); } },
+      onclick: () => { st.aba = 'lanc'; st.soPendentes = pend; st.pessoa = filtro || 'todos'; render(); } },
       h('span', { class: pend ? 'alerta' : '' }, pend ? `A categorizar (${nPend})` : nomeCat(Number(id))),
       h('span', { class: 'v' + (pend ? ' alerta' : '') }, R(v))));
   }
