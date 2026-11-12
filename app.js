@@ -65,6 +65,9 @@ function toast(msg, ms = 2600) {
 }
 const nomeCat = (id) => (st.cad.categorias.find((c) => c.id === id) || {}).nome || 'A categorizar';
 const nomePessoa = (id) => (st.cad.pessoas.find((p) => p.id === id) || {}).nome || '—';
+/** Categorias em ordem alfabética, com "Outros" por último */
+const catsOrdem = () => [...st.cad.categorias].sort((a, b) => (a.nome === 'Outros') - (b.nome === 'Outros') || a.nome.localeCompare(b.nome, 'pt-BR'))
+  .map((c) => [c.id, c.nome]);
 const catId = (nome) => (st.cad.categorias.find((c) => c.nome === nome) || {}).id;
 const partesDe = (l) => (Array.isArray(l.partes) ? l.partes : []);
 const abastDe = (l) => (Array.isArray(l.abastecimentos) ? l.abastecimentos[0] : l.abastecimentos) || null;
@@ -293,7 +296,18 @@ function padraoSugerido(desc) {
 }
 
 function abrirLanc(l) {
-  const catSel = h('select', {}, opcoes(st.cad.categorias.map((c) => [c.id, c.nome]), l.categoria_id, 'A categorizar'));
+  const catSel = h('select', {}, opcoes(catsOrdem(), l.categoria_id, 'A categorizar'), h('option', { value: '__nova' }, '+ Nova categoria…'));
+  const novaCat = h('input', { placeholder: 'Nome da nova categoria', maxlength: '40' });
+  const blocoNova = h('div', { style: 'display:flex;gap:8px' }, h('div', { class: 'campo', style: 'flex-grow:1' }, novaCat),
+    h('button', { class: 'btn', onclick: async () => {
+      const nome = novaCat.value.trim();
+      if (nome.length < 2) { toast('Escreva o nome da categoria.'); return; }
+      const r = await sb.from('categorias').insert({ nome, ordem: 50 }).select().single();
+      if (r.error) { toast(r.error.code === '23505' ? 'Essa categoria já existe.' : 'Não criou: ' + erroMsg(r.error), 4000); return; }
+      st.cad.categorias.push(r.data);
+      catSel.insertBefore(h('option', { value: String(r.data.id) }, r.data.nome), catSel.lastChild);
+      catSel.value = String(r.data.id); mostrar(); toast(`Categoria "${r.data.nome}" criada.`);
+    } }, 'Criar'));
   const porCat = divisaoPorCategoria(l);
   const marcados = new Set(divisaoPorPessoa(l) ? partesDe(l).map((p) => p.pessoa_id) : [l.pessoa_id || 'daniel']);
   const parteOutro = partesDe(l).find((p) => p.pessoa_id === 'outros');
@@ -331,8 +345,10 @@ function abrirLanc(l) {
     h('label', { class: 'check' }, cheio, 'Enchi o tanque'));
   const mostrar = () => {
     const ehGasto = comoSel.value === 'Gasto';
+    blocoNova.hidden = !ehGasto || catSel.value !== '__nova';
+    if (!blocoNova.hidden) setTimeout(() => novaCat.focus(), 50);
     catSel.parentElement.hidden = !ehGasto;
-    blocoRegra.hidden = !ehGasto || !catSel.value || !l.descricao;
+    blocoRegra.hidden = !ehGasto || !catSel.value || catSel.value === '__nova' || !l.descricao;
     blocoComb.hidden = !ehGasto || Number(catSel.value) !== catId('Combustível');
   };
   catSel.onchange = mostrar; comoSel.onchange = mostrar;
@@ -344,7 +360,7 @@ function abrirLanc(l) {
       const sel = selecionados();
       if (!porCat && !sel.length) { salvar.disabled = false; toast('Marque pelo menos uma pessoa.'); return; }
       const upd = { descricao: nome.value.trim() || l.descricao, conta_como: comoSel.value, pessoa_id: porCat ? l.pessoa_id : sel[0], observacao: obs.value.trim() || null,
-        categoria_id: comoSel.value === 'Gasto' && catSel.value ? Number(catSel.value) : null, atualizado_em: new Date().toISOString() };
+        categoria_id: comoSel.value === 'Gasto' && catSel.value && catSel.value !== '__nova' ? Number(catSel.value) : null, atualizado_em: new Date().toISOString() };
       const r = await sb.from('lancamentos').update(upd).eq('id', l.id);
       if (r.error) throw r.error;
       if (!porCat) {
@@ -390,6 +406,7 @@ function abrirLanc(l) {
     h('label', { class: 'campo' }, generico ? 'Nome (o banco não informou a loja — escreva onde foi)' : 'Nome', nome),
     h('label', { class: 'campo' }, 'Entra como', comoSel),
     h('label', { class: 'campo' }, 'Categoria', catSel),
+    blocoNova,
     blocoRegra,
     porCat ? h('div', { class: 'nota' }, 'Quem gastou está definido em cada parte da divisão.') : blocoQuem,
     blocoComb,
@@ -419,7 +436,7 @@ function abrirDivisao(l) {
   const desenhar = () => {
     lista.replaceChildren();
     linhas.forEach((x, i) => {
-      const c = h('select', { 'aria-label': 'Categoria' }, opcoes(st.cad.categorias.map((k) => [k.id, k.nome]), x.cat, 'Categoria…'));
+      const c = h('select', { 'aria-label': 'Categoria' }, opcoes(catsOrdem(), x.cat, 'Categoria…'));
       const p = h('select', { 'aria-label': 'Quem' }, opcoes(st.cad.pessoas.map((k) => [k.id, k.nome]), x.pessoa));
       const v = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: x.valor || '', 'aria-label': 'Valor' });
       c.onchange = () => { x.cat = c.value ? Number(c.value) : null; atualizar(); };
