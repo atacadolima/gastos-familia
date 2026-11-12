@@ -94,3 +94,4 @@ nav.tabs button.on { color: var(--verde); font-weight: 700; }
 .login h1 { margin: 0; font-size: 24px; }
 .erro { color: var(--erro); font-size: 14px; }
 .item-nome:disabled { color: inherit; cursor: default; opacity: 1; }
+.item .v.inv { color: #2E5E9A; }

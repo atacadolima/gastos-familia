@@ -74,6 +74,12 @@ const abastDe = (l) => (Array.isArray(l.abastecimentos) ? l.abastecimentos[0] : 
 function erroMsg(e) { return (e && (e.message || e.error_description)) || String(e); }
 
 // ---------- dados ----------
+async function carregarCaixinhas() {
+  const r = await sb.from('caixinhas_saldo').select('*').eq('ativa', true).order('nome');
+  if (!r.error) st.cad.caixinhas = r.data;
+}
+const TIPOS_CX = [['banco', 'Aplicação no banco'], ['poupanca', 'Poupança'], ['previdencia', 'Previdência privada'], ['consorcio', 'Consórcio'], ['dolar', 'Dólar / moeda'], ['outro', 'Outro']];
+const nomeCx = (id) => ((st.cad.caixinhas || []).find((c) => c.id === id) || {}).nome || 'sem caixinha';
 async function carregarCadastros() {
   const [p, c, k] = await Promise.all([
     sb.from('pessoas').select('*').order('ordem'),
@@ -81,7 +87,8 @@ async function carregarCadastros() {
     sb.from('cartoes').select('*'),
   ]);
   for (const x of [p, c, k]) if (x.error) throw x.error;
-  st.cad = { pessoas: p.data, categorias: c.data, cartoes: k.data };
+  st.cad = { pessoas: p.data, categorias: c.data, cartoes: k.data, caixinhas: [] };
+  await carregarCaixinhas();
 }
 
 async function carregarMes() {
@@ -168,13 +175,16 @@ async function telaInicio(wrap) {
   const ps = filtro ? todas.filter((p) => (p.pessoa || 'daniel') === filtro) : todas;
   const total = num(ps.reduce((s, p) => s + p.valor, 0));
   const receitas = num(st.lancs.filter((l) => l.conta_como === 'Receita').reduce((s, l) => s + Number(l.valor), 0));
+  const invMes = st.lancs.filter((l) => l.conta_como === 'Investimento');
+  const guardado = num(invMes.reduce((s, l) => s + (l.resgate ? -1 : 1) * Number(l.valor), 0));
   const filtrar = (id) => { st.filtroInicio = st.filtroInicio === id ? null : id; render(); };
 
   wrap.append(h('div', { class: 'hero' },
     h('div', { class: 'linha1' }, seletorMes(render), h('span', { class: 'rotulo' }, filtro ? nomePessoa(filtro) : 'Família')),
     h('span', { class: 'rotulo' }, filtro ? `Gasto de ${nomePessoa(filtro)} no mês` : 'Gasto no mês'),
     h('span', { class: 'grande' }, R(total)),
-    h('span', { class: 'rotulo' }, filtro ? `de ${R(totalFamilia)} da família` : `Entradas no mês: ${R(receitas)}`)));
+    h('span', { class: 'rotulo' }, filtro ? `de ${R(totalFamilia)} da família` : `Entradas no mês: ${R(receitas)}`),
+    !filtro && invMes.length ? h('span', { class: 'rotulo' }, guardado >= 0 ? `Guardado no mês: ${R(guardado)}` : `Resgatado no mês: ${R(-guardado)}`) : null));
   const corpo = h('div', { class: 'corpo' });
   wrap.append(corpo);
   if (filtro) {
@@ -218,6 +228,22 @@ async function telaInicio(wrap) {
   }
   corpo.append(cardC);
 
+  // Investimentos (caixinhas)
+  await carregarCaixinhas();
+  const cxs = st.cad.caixinhas;
+  const cardI = h('div', { class: 'card' }, h('div', { class: 'lin' }, h('h2', {}, 'Investimentos'),
+    h('span', { class: 'v' }, R(cxs.reduce((s, c) => s + Number(c.saldo || 0), 0)))));
+  if (!cxs.length) cardI.append(h('div', { class: 'nota' }, 'Nenhuma caixinha ainda.'));
+  for (const c of cxs) {
+    const semSaldo = c.saldo_banco == null && Number(c.saldo_inicial) === 0 && c.tipo !== 'consorcio' && c.tipo !== 'outro';
+    cardI.append(h('button', { class: 'lin', style: 'border:none;background:none;padding:4px 0;text-align:left;min-height:40px', onclick: () => abrirCaixinha(c) },
+      h('span', {}, c.nome, h('br'), h('span', { class: 'nota' + (semSaldo ? ' alerta' : '') },
+        semSaldo ? 'toque para informar o saldo de hoje' : (TIPOS_CX.find((t) => t[0] === c.tipo) || [0, ''])[1] + (c.qtd_dolar ? ` · US$ ${Number(c.qtd_dolar).toLocaleString('pt-BR')}` : ''))),
+      h('span', { class: 'v' }, R(c.saldo))));
+  }
+  cardI.append(h('button', { class: 'btn sec', onclick: () => abrirCaixinha(null) }, '+ Nova caixinha'));
+  corpo.append(cardI);
+
   // Cartões e contas
   const { data: contas } = await sb.from('contas_banco').select('*').order('banco');
   const cardF = h('div', { class: 'card' }, h('h2', {}, 'Cartões e contas'));
@@ -256,7 +282,7 @@ function telaLancamentos(wrap) {
 
   const corpo = h('div', { class: 'corpo', style: 'gap:8px' });
   wrap.append(corpo);
-  let lista = st.lancs.filter((l) => (st.verTransf ? true : l.conta_como === 'Gasto' || l.conta_como === 'Receita'));
+  let lista = st.lancs.filter((l) => (st.verTransf ? true : ['Gasto', 'Receita', 'Investimento'].includes(l.conta_como)));
   if (st.pessoa !== 'todos') lista = lista.filter((l) => l.pessoa_id === st.pessoa || partesDe(l).some((p) => p.pessoa_id === st.pessoa));
   if (st.soPendentes) lista = lista.filter(pendente);
   if (!lista.length) { corpo.append(h('div', { class: 'vazio' }, st.soPendentes ? 'Nada para categorizar. 👍' : 'Nenhum lançamento.')); return; }
@@ -272,11 +298,12 @@ function telaLancamentos(wrap) {
 function itemLanc(l) {
   const ps = partesDe(l);
   const porPes = divisaoPorPessoa(l);
-  const cat = ps.length && !porPes ? `Dividido em ${ps.length}` : l.conta_como === 'Gasto' ? nomeCat(l.categoria_id) : l.conta_como;
+  const cat = ps.length && !porPes ? `Dividido em ${ps.length}` : l.conta_como === 'Gasto' ? nomeCat(l.categoria_id)
+    : l.conta_como === 'Investimento' ? `${l.resgate ? 'Resgate' : 'Investimento'} · ${nomeCx(l.caixinha_id)}` : l.conta_como;
   const quem = porPes ? ps.map((p) => nomePessoa(p.pessoa_id)).join(', ') : nomePessoa(l.pessoa_id);
   const fim = l.final_cartao ? ` ${l.final_cartao}` : '';
   const ab = abastDe(l);
-  const classeV = l.conta_como === 'Receita' ? 'v rec' : l.conta_como === 'Gasto' ? 'v' : 'v neu';
+  const classeV = l.conta_como === 'Receita' ? 'v rec' : l.conta_como === 'Gasto' ? 'v' : l.conta_como === 'Investimento' ? 'v inv' : 'v neu';
   const tags = [];
   if (l.conferido) tags.push(h('span', { class: 'tag ok' }, l.aviso_id ? 'aviso + banco' : 'banco'));
   else if (l.origem === 'aviso') tags.push(h('span', { class: 'tag amb' }, 'só aviso'));
@@ -340,7 +367,16 @@ function abrirLanc(l) {
     outroNome.parentElement.hidden = !sel.includes('outros');
     cadaUm.textContent = sel.length > 1 ? `Dividido igual: ${R(dividirIgual(Number(l.valor), sel.length)[sel.length - 1])} para cada um.` : '';
   };
-  const comoSel = h('select', {}, opcoes([['Gasto', 'Gasto'], ['Receita', 'Receita (entrada)'], ['Entre contas', 'Transferência entre contas / não conta'], ['Detalhe', 'Detalhe (não soma)']], l.conta_como));
+  const comoSel = h('select', {}, opcoes([['Gasto', 'Gasto'], ['Receita', 'Receita (entrada)'], ['Investimento', 'Investimento (dinheiro guardado)'], ['Entre contas', 'Transferência entre contas / não conta'], ['Detalhe', 'Detalhe (não soma)']], l.conta_como));
+  const cxSel = h('select', {}, opcoes((st.cad.caixinhas || []).map((c) => [c.id, c.nome]), l.caixinha_id, 'Escolha a caixinha…'), h('option', { value: '__nova' }, '+ Nova caixinha…'));
+  const cxNome = h('input', { placeholder: 'ex.: Poupança, Consórcio do carro, Dólares', maxlength: '60' });
+  const cxTipo = h('select', {}, opcoes(TIPOS_CX, 'banco'));
+  const resgate = h('input', { type: 'checkbox', checked: !!l.resgate });
+  const blocoCxNova = h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Nome', cxNome), h('label', { class: 'campo' }, 'Tipo', cxTipo));
+  const blocoInv = h('div', { class: 'card' }, h('h2', {}, 'Investimento'), h('label', { class: 'campo' }, 'Caixinha', cxSel), blocoCxNova,
+    h('label', { class: 'check' }, resgate, 'É resgate (o dinheiro voltou para a conta)'),
+    h('div', { class: 'nota' }, 'Não entra no gasto do mês; soma no saldo da caixinha.'));
+  cxSel.onchange = () => { blocoCxNova.hidden = cxSel.value !== '__nova'; };
   const obs = h('textarea', { placeholder: 'ex.: lavagem do carro' }, l.observacao || '');
   const nome = h('input', { value: l.descricao || '', placeholder: 'ex.: Padaria do Zé' });
   const generico = /^(DEBITO DE CARTAO|itau|Saída na conta)$/i.test((l.descricao || '').trim());
@@ -363,6 +399,8 @@ function abrirLanc(l) {
     catSel.parentElement.hidden = !ehGasto;
     blocoRegra.hidden = !ehGasto || !catSel.value || catSel.value === '__nova' || !l.descricao;
     blocoComb.hidden = !ehGasto || Number(catSel.value) !== catId('Combustível');
+    blocoInv.hidden = comoSel.value !== 'Investimento';
+    blocoCxNova.hidden = cxSel.value !== '__nova';
   };
   catSel.onchange = mostrar; comoSel.onchange = mostrar;
   const ps = partesDe(l);
@@ -372,7 +410,17 @@ function abrirLanc(l) {
     try {
       const sel = selecionados();
       if (!porCat && !sel.length) { salvar.disabled = false; toast('Marque pelo menos uma pessoa.'); return; }
-      const upd = { descricao: nome.value.trim() || l.descricao, conta_como: comoSel.value, pessoa_id: porCat ? l.pessoa_id : sel[0], observacao: obs.value.trim() || null,
+      let cxId = null;
+      if (comoSel.value === 'Investimento') {
+        if (cxSel.value === '__nova') {
+          if (cxNome.value.trim().length < 2) { salvar.disabled = false; toast('Dê um nome para a caixinha.'); return; }
+          const nc = await sb.from('caixinhas').insert({ nome: cxNome.value.trim(), tipo: cxTipo.value, banco: l.banco }).select().single();
+          if (nc.error) throw nc.error;
+          cxId = nc.data.id;
+        } else if (cxSel.value) cxId = Number(cxSel.value);
+        else { salvar.disabled = false; toast('Escolha a caixinha.'); return; }
+      }
+      const upd = { caixinha_id: cxId, resgate: comoSel.value === 'Investimento' && resgate.checked, descricao: nome.value.trim() || l.descricao, conta_como: comoSel.value, pessoa_id: porCat ? l.pessoa_id : sel[0], observacao: obs.value.trim() || null,
         categoria_id: comoSel.value === 'Gasto' && catSel.value && catSel.value !== '__nova' ? Number(catSel.value) : null, atualizado_em: new Date().toISOString() };
       const r = await sb.from('lancamentos').update(upd).eq('id', l.id);
       if (r.error) throw r.error;
@@ -402,7 +450,7 @@ function abrirLanc(l) {
         if (r3.error) throw r3.error;
       }
       fecharSheet();
-      await carregarMes(); render();
+      await carregarCaixinhas(); await carregarMes(); render();
       toast(extras ? `Salvo. Mais ${extras} lançamento(s) categorizados.` : 'Salvo.');
     } catch (e) { salvar.disabled = false; toast('Não salvou: ' + erroMsg(e), 4000); }
   } }, 'Salvar');
@@ -418,6 +466,7 @@ function abrirLanc(l) {
         : 'Veio só pelo aviso do celular; o banco ainda não confirmou.')),
     h('label', { class: 'campo' }, generico ? 'Nome (o banco não informou a loja — escreva onde foi)' : 'Nome', nome),
     h('label', { class: 'campo' }, 'Entra como', comoSel),
+    blocoInv,
     h('label', { class: 'campo' }, 'Categoria', catSel),
     blocoNova,
     blocoRegra,
@@ -429,6 +478,56 @@ function abrirLanc(l) {
     h('div', { class: 'btns' }, salvar,
       comoSel.value === 'Gasto' ? h('button', { class: 'btn sec', onclick: () => abrirDivisao(l) }, porCat ? 'Editar divisão' : 'Dividir por categoria') : null));
   mostrar(); atualizaQuem();
+}
+
+async function abrirCaixinha(c) {
+  const nova = !c;
+  c = c || { nome: '', tipo: 'banco', saldo: 0, aportes: 0, resgates: 0, saldo_inicial: 0 };
+  const nome = h('input', { value: c.nome, maxlength: '60', placeholder: 'ex.: Poupança, Consórcio do carro' });
+  const tipo = h('select', {}, opcoes(TIPOS_CX, c.tipo));
+  const saldoHoje = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', placeholder: 'ex.: 1500,00',
+    value: c.saldo_banco == null && !nova ? Number(c.saldo).toFixed(2) : '' });
+  const dolar = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: c.qtd_dolar ?? '', placeholder: 'ex.: 500' });
+  const carta = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: c.valor_carta ?? '', placeholder: 'ex.: 80000' });
+  const blocoDolar = h('label', { class: 'campo' }, 'Quantos dólares (US$)', dolar);
+  const blocoCarta = h('label', { class: 'campo' }, 'Valor da carta do consórcio', carta);
+  const ajusta = () => { blocoDolar.hidden = tipo.value !== 'dolar'; blocoCarta.hidden = tipo.value !== 'consorcio'; };
+  tipo.onchange = ajusta;
+  let hist = [];
+  if (!nova) {
+    const r = await sb.from('lancamentos').select('id, data_hora, valor, resgate, descricao').eq('caixinha_id', c.id).eq('conta_como', 'Investimento')
+      .order('data_hora', { ascending: false }).limit(60);
+    hist = r.data || [];
+  }
+  const salvar = h('button', { class: 'btn', onclick: async () => {
+    if (nome.value.trim().length < 2) { toast('Dê um nome para a caixinha.'); return; }
+    salvar.disabled = true;
+    const dados = { nome: nome.value.trim(), tipo: tipo.value,
+      qtd_dolar: tipo.value === 'dolar' && dolar.value ? Number(dolar.value) : null,
+      valor_carta: tipo.value === 'consorcio' && carta.value ? Number(carta.value) : null };
+    // "Saldo de hoje" vira o saldo inicial (o que já existia antes dos lançamentos anotados)
+    if (saldoHoje.value !== '' && c.saldo_banco == null) dados.saldo_inicial = num(Number(saldoHoje.value) - Number(c.aportes || 0) + Number(c.resgates || 0));
+    const r = nova ? await sb.from('caixinhas').insert(dados) : await sb.from('caixinhas').update(dados).eq('id', c.id);
+    if (r.error) { salvar.disabled = false; toast(r.error.code === '23505' ? 'Já existe uma caixinha com esse nome.' : 'Não salvou: ' + erroMsg(r.error), 4000); return; }
+    fecharSheet(); await carregarCaixinhas(); render(); toast('Caixinha salva.');
+  } }, 'Salvar');
+  abrirSheet(
+    h('h3', {}, nova ? 'Nova caixinha' : c.nome),
+    nova ? null : h('div', { class: 'card', style: 'gap:6px' },
+      h('div', { class: 'lin' }, h('span', {}, 'Saldo'), h('span', { class: 'v' }, R(c.saldo))),
+      h('div', { class: 'lin' }, h('span', {}, 'Aportes anotados'), h('span', {}, R(c.aportes))),
+      h('div', { class: 'lin' }, h('span', {}, 'Resgates anotados'), h('span', {}, R(c.resgates))),
+      c.saldo_banco != null ? h('div', { class: 'nota' }, `Saldo informado pelo banco ${haQuanto(c.saldo_banco_em)}.`) : null),
+    h('label', { class: 'campo' }, 'Nome', nome),
+    h('label', { class: 'campo' }, 'Tipo', tipo),
+    c.saldo_banco == null ? h('label', { class: 'campo' }, 'Saldo de hoje (confira no app do banco)', saldoHoje) : null,
+    c.saldo_banco == null ? h('div', { class: 'nota' }, 'Informe uma vez; daí em diante o app soma os aportes e desconta os resgates.') : null,
+    blocoDolar, blocoCarta,
+    h('div', { class: 'btns' }, salvar),
+    hist.length ? h('div', { class: 'card', style: 'gap:6px' }, h('h2', {}, 'Histórico'),
+      hist.map((x) => h('div', { class: 'lin' }, h('span', {}, `${dataCurta(x.data_hora)} · ${x.resgate ? 'Resgate' : 'Aporte'}`),
+        h('span', { class: 'v', style: x.resgate ? 'color:var(--erro)' : 'color:var(--receita)' }, (x.resgate ? '− ' : '+ ') + R(x.valor))))) : null);
+  ajusta();
 }
 
 function abrirDivisao(l) {

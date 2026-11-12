@@ -58,12 +58,44 @@ Deno.serve(async (req) => {
     const { data: itens, error: eItens } = await db.from('pluggy_itens').select('id, banco');
     if (eItens) throw eItens;
     const cad = await carregarCadastros(db);
-    const { data: cpl } = await db.from('categorias_pluggy').select('pluggy, categoria_id, entre_contas');
+    const { data: cpl } = await db.from('categorias_pluggy').select('pluggy, categoria_id, entre_contas, investimento');
+    const { data: rcx } = await db.from('regras_caixinha').select('padrao, caixinha, tipo');
+    const semAc = (x: string) => (x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const cacheCx = new Map<string, number>();
+    async function caixinhaId(nome: string, tipo: string, banco: string) {
+      if (cacheCx.has(nome)) return cacheCx.get(nome)!;
+      const { data: ja } = await db.from('caixinhas').select('id').eq('nome', nome).maybeSingle();
+      let id = ja?.id;
+      if (!id) {
+        const novo = await db.from('caixinhas').insert({ nome, tipo, banco }).select('id').single();
+        if (novo.error) throw novo.error;
+        id = novo.data.id;
+      }
+      cacheCx.set(nome, id);
+      return id;
+    }
+    let investimentosLidos = 0;
     const catPluggy = new Map((cpl || []).map((x: any) => [x.pluggy, x]));
     let novas = 0, casadas = 0, criadas = 0;
 
     for (const item of itens!) {
       const contas = (await pluggy(`/accounts?itemId=${item.id}`, apiKey)).results || [];
+      // Investimentos com saldo (poupança, CDB, previdência…), quando o banco compartilha
+      try {
+        const inv = (await pluggy(`/investments?itemId=${item.id}`, apiKey)).results || [];
+        for (const x of inv) {
+          const nome = `${x.name || x.type || 'Investimento'} · ${item.banco}`.slice(0, 80);
+          const { data: ja } = await db.from('caixinhas').select('id').eq('pluggy_id', x.id).maybeSingle();
+          const dados = { saldo_banco: x.balance ?? x.amount ?? null, saldo_banco_em: new Date().toISOString(), banco: item.banco };
+          if (ja) await db.from('caixinhas').update(dados).eq('id', ja.id);
+          else {
+            const tipo = /prev/i.test(`${x.type} ${x.subtype} ${x.name}`) ? 'previdencia' : /poupan|saving/i.test(`${x.type} ${x.subtype} ${x.name}`) ? 'poupanca' : 'banco';
+            const r = await db.from('caixinhas').insert({ nome, tipo, pluggy_id: x.id, ...dados });
+            if (r.error && r.error.code === '23505') await db.from('caixinhas').insert({ nome: `${nome} ${String(x.id).slice(0, 4)}`, tipo, pluggy_id: x.id, ...dados });
+          }
+          investimentosLidos++;
+        }
+      } catch (e) { resumo[`investimentos_${item.banco}`] = 'não compartilhado'; }
       for (const c of contas) {
         const cd = c.creditData || {};
         await db.from('contas_banco').upsert({
@@ -113,12 +145,21 @@ Deno.serve(async (req) => {
             const cp: any = catPluggy.get(t.categoria_pluggy);
             let cc = contaComo(t);
             if (cc === 'Gasto' && cp?.entre_contas) cc = 'Entre contas';
+            // Investimento (aplicação, previdência, poupança…): sai do mês mas não é gasto; vai para uma caixinha
+            const textoInv = semAc(`${t.descricao} ${(t.bruto && t.bruto.description) || ''}`);
+            const rc: any = (rcx || []).find((r: any) => textoInv.includes(semAc(r.padrao)));
+            let cxId: number | null = null;
+            if (rc || cp?.investimento) {
+              cc = 'Investimento';
+              cxId = await caixinhaId(rc ? rc.caixinha : `Investimentos ${t.banco}`, rc ? rc.tipo : 'banco', t.banco);
+            }
             const novo = await db.from('lancamentos').insert({
               origem: 'banco', banco: t.banco, tipo: tipoDe(t), conta_como: cc, valor: t.valor, data_hora: t.data,
               descricao: t.contraparte || t.descricao, final_cartao: t.final_cartao,
               pessoa_id: pessoaDe(cad, t.banco, t.final_cartao, null),
               categoria_id: cc === 'Gasto' ? (categoriaDe(cad, `${t.descricao} ${t.contraparte || ''}`) ?? cp?.categoria_id ?? null) : null,
               parcela: t.parcela, total_parcelas: t.total_parcelas,
+              caixinha_id: cxId, resgate: cc === 'Investimento' && t.sentido === 'entrada',
               transacao_banco_id: t.id, conferido: true,
             }).select('id').single();
             if (novo.error) throw novo.error;
@@ -132,7 +173,7 @@ Deno.serve(async (req) => {
     // Pagamento de fatura feito pela conta corrente: as compras já contam no cartão, então não é gasto.
     const pf = await db.rpc('marcar_pagamentos_fatura');
     if (pf.error) throw pf.error;
-    Object.assign(resumo, { faturas_pagas: pf.data, novas, casadas_com_aviso: casadas, so_no_banco: criadas });
+    Object.assign(resumo, { investimentos_lidos: investimentosLidos, faturas_pagas: pf.data, novas, casadas_com_aviso: casadas, so_no_banco: criadas });
     await db.from('sync_log').update({ fim: new Date().toISOString(), ok: true, detalhe: JSON.stringify(resumo) }).eq('id', log.data!.id);
     return json({ ok: true, ...resumo });
   } catch (e) {
