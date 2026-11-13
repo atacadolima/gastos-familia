@@ -1,6 +1,7 @@
 -- Séries (parcelas da mesma compra / assinaturas) e lançamentos previstos
 alter table lancamentos add column if not exists serie text;
 alter table lancamentos add column if not exists previsto boolean not null default false;
+alter table lancamentos add column if not exists data_compra timestamptz;
 create index if not exists lancamentos_serie on lancamentos (serie);
 
 -- Nome-base: tira "02/03", números soltos, asteriscos e espaços repetidos
@@ -43,10 +44,10 @@ begin
     for k in (r.parcela + 1)..r.total_parcelas loop
       if not exists (select 1 from lancamentos where serie = r.serie and parcela = k) then
         insert into lancamentos (origem, banco, tipo, conta_como, valor, data_hora, descricao, final_cartao, pessoa_id,
-                                 categoria_id, parcela, total_parcelas, serie, previsto, conferido)
+                                 categoria_id, parcela, total_parcelas, serie, previsto, conferido, data_compra)
         values ('manual', r.banco, r.tipo, r.conta_como, r.valor,
                 r.data_hora + make_interval(months => k - r.parcela), r.descricao, r.final_cartao, r.pessoa_id,
-                r.categoria_id, k, r.total_parcelas, r.serie, true, false);
+                r.categoria_id, k, r.total_parcelas, r.serie, true, false, r.data_compra);
         n_prev := n_prev + 1;
       end if;
     end loop;
@@ -124,3 +125,13 @@ update lancamentos set categoria_id = (select id from categorias where nome='Com
  where descricao ~* 'mercado\s*\*?\s*livre|mercadoliv' and categoria_id = (select id from categorias where nome='Mercado');
 
 select gerar_previstos();
+alter table partes add column if not exists nome_outro text;
+
+-- Data da compra das parcelas (vem do banco em cada parcela)
+update lancamentos l set data_compra = (t.bruto->'creditCardMetadata'->>'purchaseDate')::timestamptz
+  from transacoes_banco t
+ where t.lancamento_id = l.id and l.total_parcelas > 1 and l.data_compra is null
+   and t.bruto->'creditCardMetadata'->>'purchaseDate' is not null;
+update lancamentos l set data_compra = x.dc
+  from (select serie, min(data_compra) dc from lancamentos where serie is not null and data_compra is not null group by serie) x
+ where l.serie = x.serie and l.data_compra is null;

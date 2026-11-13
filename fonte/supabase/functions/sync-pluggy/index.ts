@@ -34,6 +34,12 @@ async function pluggy(path: string, apiKey: string) {
 
 const dia = (d: Date) => d.toISOString().slice(0, 10);
 
+// Data em que a compra parcelada foi feita (o banco manda junto com cada parcela)
+function dataCompra(t: any): string | null {
+  const m = (t.bruto && t.bruto.creditCardMetadata) || {};
+  return t.total_parcelas > 1 && m.purchaseDate ? m.purchaseDate : null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (!(await autorizado(req))) return json({ erro: 'não autorizado' }, 401);
@@ -135,7 +141,7 @@ Deno.serve(async (req) => {
             const par = acharPar(t, pool);
             if (par) {
               const upd: Record<string, unknown> = { transacao_banco_id: t.id, conferido: true, atualizado_em: new Date().toISOString() };
-              if (t.total_parcelas > 1) Object.assign(upd, { valor: t.valor, parcela: t.parcela, total_parcelas: t.total_parcelas });
+              if (t.total_parcelas > 1) Object.assign(upd, { valor: t.valor, parcela: t.parcela, total_parcelas: t.total_parcelas, data_compra: dataCompra(t) });
               await db.from('lancamentos').update(upd).eq('id', par.id);
               await db.from('transacoes_banco').update({ lancamento_id: par.id }).eq('id', t.id);
               par.transacao_banco_id = t.id;
@@ -158,7 +164,7 @@ Deno.serve(async (req) => {
               descricao: t.contraparte || t.descricao, final_cartao: t.final_cartao,
               pessoa_id: pessoaDe(cad, t.banco, t.final_cartao, null),
               categoria_id: cc === 'Gasto' ? (categoriaDe(cad, `${t.descricao} ${t.contraparte || ''}`) ?? cp?.categoria_id ?? null) : null,
-              parcela: t.parcela, total_parcelas: t.total_parcelas,
+              parcela: t.parcela, total_parcelas: t.total_parcelas, data_compra: dataCompra(t),
               caixinha_id: cxId, resgate: cc === 'Investimento' && t.sentido === 'entrada',
               transacao_banco_id: t.id, conferido: true,
             }).select('id').single();

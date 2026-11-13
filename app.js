@@ -377,6 +377,8 @@ function telaLancamentos(wrap) {
   }
 }
 
+const dataCompra = (d) => new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
 function itemLanc(l) {
   const ps = partesDe(l);
   const porPes = divisaoPorPessoa(l);
@@ -391,6 +393,7 @@ function itemLanc(l) {
   else if (l.conferido) tags.push(h('span', { class: 'tag ok' }, l.aviso_id ? 'aviso + banco' : 'banco'));
   else if (l.origem === 'aviso') tags.push(h('span', { class: 'tag amb' }, 'só aviso'));
   if (l.total_parcelas > 1) tags.push(h('span', { class: 'tag' }, `parcela ${l.parcela}/${l.total_parcelas}`));
+  if (l.total_parcelas > 1 && l.data_compra) tags.push(h('span', { class: 'tag compra' }, `comprado em ${dataCompra(l.data_compra)}`));
   return h('button', { class: 'item' + (pendente(l) ? ' pend' : '') + (l.previsto ? ' prev' : ''), onclick: () => abrirLanc(l) },
     icoLanc(l),
     h('div', { class: 'itemcorpo' },
@@ -553,9 +556,10 @@ function abrirLanc(l) {
     h('h3', {}, l.descricao || l.tipo),
     h('div', { class: 'card', style: 'gap:6px' },
       h('div', { class: 'lin' }, h('span', {}, 'Valor'), h('span', { class: 'v' }, R(l.valor))),
-      h('div', { class: 'lin' }, h('span', {}, 'Data'), h('span', {}, `${dataCurta(l.data_hora)} ${hora(l.data_hora)}`)),
+      h('div', { class: 'lin' }, h('span', {}, l.total_parcelas > 1 ? 'Data da parcela' : 'Data'), h('span', {}, `${dataCurta(l.data_hora)} ${hora(l.data_hora)}`)),
       h('div', { class: 'lin' }, h('span', {}, 'Onde'), h('span', {}, `${l.banco || ''} ${l.final_cartao ? 'final ' + l.final_cartao : ''} · ${l.tipo || ''}`)),
       l.total_parcelas > 1 ? h('div', { class: 'lin' }, h('span', {}, 'Parcela'), h('span', {}, `${l.parcela}/${l.total_parcelas}`)) : null,
+      l.total_parcelas > 1 && l.data_compra ? h('div', { class: 'lin' }, h('span', {}, 'Data da compra'), h('b', {}, dataCompra(l.data_compra))) : null,
       l.serie ? h('div', { class: 'nota', style: 'color:var(--verde);font-weight:600' }, l.serie.startsWith('rec:')
         ? 'Assinatura: o que você mudar aqui vale para todos os meses.' : 'Compra parcelada: o que você mudar aqui vale para todas as parcelas.') : null,
       l.previsto ? h('div', { class: 'nota' }, 'Previsto: ainda não caiu. Quando o lançamento real chegar, ele toma o lugar deste.') : null,
