@@ -398,7 +398,9 @@ function itemLanc(l) {
       h('div', { class: 'd' }, pendente(l) ? h('b', { class: 'alerta' }, 'Toque para escolher a categoria · ') : null,
         `${hora(l.data_hora)} · ${pendente(l) ? '' : cat + ' · '}${l.banco || ''}${fim} · ${quem}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
       tags.length ? h('div', {}, tags) : null,
-      l.observacao ? h('div', { class: 'd' }, `“${l.observacao}”`) : null));
+      l.observacao ? h('div', { class: 'd' }, `“${l.observacao}”`) : null,
+      ps.length && !porPes ? h('div', { class: 'partes-lista' }, ps.map((p) => h('div', { class: 'd' },
+        `• ${nomeCat(p.categoria_id)} · ${nomePessoa(p.pessoa_id || l.pessoa_id)} · ${R(p.valor)}${p.observacao ? ` — ${p.observacao}` : ''}`))) : null));
 }
 
 // ----- Folha de edição -----
@@ -627,8 +629,8 @@ async function abrirCaixinha(c) {
 
 function abrirDivisao(l) {
   const total = num(l.valor);
-  let linhas = (divisaoPorCategoria(l) ? partesDe(l) : []).map((p) => ({ cat: p.categoria_id, pessoa: p.pessoa_id || l.pessoa_id, valor: Number(p.valor) }));
-  if (!linhas.length) linhas = [{ cat: l.categoria_id, pessoa: l.pessoa_id, valor: total }, { cat: null, pessoa: l.pessoa_id, valor: 0 }];
+  let linhas = (divisaoPorCategoria(l) ? partesDe(l) : []).map((p) => ({ cat: p.categoria_id, pessoa: p.pessoa_id || l.pessoa_id, valor: Number(p.valor), obs: p.observacao || '' }));
+  if (!linhas.length) linhas = [{ cat: l.categoria_id, pessoa: l.pessoa_id, valor: total, obs: '' }, { cat: null, pessoa: l.pessoa_id, valor: 0, obs: '' }];
   const lista = h('div', { style: 'display:flex;flex-direction:column;gap:8px' });
   const falta = h('div', { class: 'lin' });
   const salvar = h('button', { class: 'btn' }, 'Salvar divisão');
@@ -646,11 +648,15 @@ function abrirDivisao(l) {
       const c = h('select', { 'aria-label': 'Categoria' }, opcoes(catsOrdem(), x.cat, 'Categoria…'));
       const p = h('select', { 'aria-label': 'Quem' }, opcoes(st.cad.pessoas.map((k) => [k.id, k.nome]), x.pessoa));
       const v = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: x.valor || '', 'aria-label': 'Valor' });
+      const o = h('input', { type: 'text', value: x.obs || '', placeholder: 'Do que se trata (opcional)', 'aria-label': `Observação da parte ${i + 1}`, maxlength: '120' });
       c.onchange = () => { x.cat = c.value ? Number(c.value) : null; atualizar(); };
       p.onchange = () => { x.pessoa = p.value; };
       v.oninput = () => { x.valor = Number(String(v.value).replace(',', '.')) || 0; atualizar(); };
-      lista.append(h('div', { class: 'parte campo' }, c, p, v,
-        h('button', { 'aria-label': 'Remover parte', onclick: () => { linhas.splice(i, 1); desenhar(); } }, '✕')));
+      o.oninput = () => { x.obs = o.value; };
+      lista.append(h('div', { class: 'parte-card campo' },
+        h('div', { class: 'parte-topo' }, h('b', {}, `Parte ${i + 1}`),
+          h('button', { class: 'parte-x', 'aria-label': `Remover parte ${i + 1}`, onclick: () => { linhas.splice(i, 1); desenhar(); } }, '✕')),
+        c, h('div', { class: 'grade2' }, p, v), o));
     });
     atualizar();
   };
@@ -659,7 +665,7 @@ function abrirDivisao(l) {
     try {
       const d = await sb.from('partes').delete().eq('lancamento_id', l.id);
       if (d.error) throw d.error;
-      const ins = await sb.from('partes').insert(linhas.map((x) => ({ lancamento_id: l.id, categoria_id: x.cat, pessoa_id: x.pessoa, valor: num(x.valor) })));
+      const ins = await sb.from('partes').insert(linhas.map((x) => ({ lancamento_id: l.id, categoria_id: x.cat, pessoa_id: x.pessoa, valor: num(x.valor), observacao: (x.obs || '').trim() || null })));
       if (ins.error) throw ins.error;
       fecharSheet(); await carregarMes(); render(); toast('Divisão salva.');
     } catch (e) { salvar.disabled = false; toast('Não salvou: ' + erroMsg(e), 4000); }
@@ -668,7 +674,7 @@ function abrirDivisao(l) {
     h('h3', {}, 'Dividir lançamento'),
     h('div', { class: 'lin' }, h('span', {}, l.descricao || l.tipo), h('span', { class: 'v' }, R(total))),
     lista,
-    h('button', { class: 'btn sec', onclick: () => { linhas.push({ cat: null, pessoa: l.pessoa_id, valor: 0 }); desenhar(); } }, '+ Adicionar parte'),
+    h('button', { class: 'btn sec', onclick: () => { linhas.push({ cat: null, pessoa: l.pessoa_id, valor: 0, obs: '' }); desenhar(); } }, '+ Adicionar parte'),
     h('div', { class: 'card' }, falta),
     h('div', { class: 'btns' }, salvar,
       divisaoPorCategoria(l) ? h('button', { class: 'btn perigo', onclick: async () => {
