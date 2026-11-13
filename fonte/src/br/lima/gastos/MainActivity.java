@@ -25,7 +25,7 @@ public final class MainActivity extends Activity {
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        getWindow().setStatusBarColor(0xFF1F5C4A);
+        getWindow().setStatusBarColor(0xFF1B3FBF);
         web = new WebView(this);
         web.setBackgroundColor(Color.parseColor("#F4F5F3"));
         WebSettings s = web.getSettings();

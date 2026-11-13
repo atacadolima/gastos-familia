@@ -29,7 +29,7 @@ import java.util.Locale;
 
 public final class StatusActivity extends Activity {
 
-    private static final int VERDE = 0xFF1F5C4A;
+    private static final int VERDE = 0xFF1B3FBF;
     private static final SimpleDateFormat FMT = new SimpleDateFormat("dd/MM HH:mm", new Locale("pt", "BR"));
 
     private List<Db.Aviso> itens = new ArrayList<>();

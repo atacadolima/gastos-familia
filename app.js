@@ -139,6 +139,55 @@ function render() {
   app.append(navegacao());
 }
 
+// Ícone e cor de cada categoria (pelo nome; categorias novas caem em "Outros")
+const CAT_ICONE = [
+  [/mercado/i, 'M3 4h2l2.4 11.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.8L20 8H6.2M9 20h.01M17 20h.01', '#C2560C', '#FDE8D4'],
+  [/combust/i, 'M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M14 9h2a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0V8l-3-3M7 8h4', '#1B3FBF', '#E2E8FB'],
+  [/^carro/i, 'M5 16l1.5-5A2 2 0 0 1 8.4 9.5h7.2a2 2 0 0 1 1.9 1.5L19 16M4 16h16v3H4zM7 19v2M17 19v2', '#1B3FBF', '#E2E8FB'],
+  [/restaur|lanche/i, 'M6 3v8a3 3 0 0 0 6 0V3M9 3v18M17 3c-2 2-2 6 0 8v10', '#A8461A', '#FBE7D9'],
+  [/farm|saúde/i, 'M10 3h4v4l3 3v11H7V10l3-3zM10 15h4M12 13v4', '#B0285A', '#F7DDE6'],
+  [/^casa/i, 'M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z', '#0E7C86', '#DDF1F2'],
+  [/contas/i, 'M13 2L4 14h7l-1 8 9-12h-7z', '#B07A00', '#FFF2C7'],
+  [/assinat/i, 'M4 6h16v12H4zM10 9l5 3-5 3z', '#6A3FB5', '#E9E1F7'],
+  [/roupa|calçad/i, 'M8 3l-5 3 2 4 3-1v12h8V9l3 1 2-4-5-3a4 4 0 0 1-8 0z', '#B0285A', '#F7DDE6'],
+  [/^compras/i, 'M6 7h12l1 14H5zM9 7a3 3 0 0 1 6 0', '#C2560C', '#FDE8D4'],
+  [/gabriel/i, 'M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM5 21a7 7 0 0 1 14 0M10 8h.01M14 8h.01', '#0E7C86', '#DDF1F2'],
+  [/lazer/i, 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z', '#6A3FB5', '#E9E1F7'],
+  [/viagem/i, 'M2 16l20-7-3-2-7 2-5-4-2 1 3 5-4 1-2-1-1 1z', '#0E7C86', '#DDF1F2'],
+  [/educa/i, 'M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21a2 2 0 0 1 2-2h13', '#1B3FBF', '#E2E8FB'],
+  [/presente/i, 'M4 10h16v11H4zM2 7h20v3H2zM12 7v14M12 7c-2-4-6-4-6-1s6 1 6 1zm0 0c2-4 6-4 6-1s-6 1-6 1z', '#B0285A', '#F7DDE6'],
+  [/tarifa|juros/i, 'M19 5L5 19M7 8a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM17 18a1 1 0 1 0 0-2 1 1 0 0 0 0 2z', '#B3261E', '#FBE3E1'],
+  [/previd|seguro/i, 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z', '#1B3FBF', '#E2E8FB'],
+  [/doaç/i, 'M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z', '#B0285A', '#F7DDE6'],
+  [/beleza|cuidado/i, 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 17l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z', '#B0285A', '#F7DDE6'],
+  [/funcion|serviço/i, 'M9 3h6l-1 7h-4zM6 21l2-11h8l2 11z', '#0E7C86', '#DDF1F2'],
+  [/imposto/i, 'M6 2h12v20l-3-2-3 2-3-2-3 2zM9 7h6M9 11h6M9 15h4', '#B3261E', '#FBE3E1'],
+  [/moradia/i, 'M4 21V8l8-5 8 5v13M9 21v-6h6v6M4 21h16', '#0E7C86', '#DDF1F2'],
+  [/academia|esporte/i, 'M6 7v10M18 7v10M3 10v4M21 10v4M6 12h12', '#C2560C', '#FDE8D4'],
+  [/pets/i, 'M12 14c-3 0-6 3-6 5.5 0 1.5 1.5 1.5 3 1s2-.5 3-.5 1.5 0 3 .5 3 .5 3-1C18 17 15 14 12 14zM6 10a1.5 2 0 1 0 0-.1M18 10a1.5 2 0 1 0 0-.1M9.5 6a1.5 2 0 1 0 0-.1M14.5 6a1.5 2 0 1 0 0-.1', '#A8461A', '#FBE7D9'],
+  [/empresa|reembols/i, 'M3 7h18v13H3zM8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18', '#4A5568', '#E8EBF0'],
+];
+const ICO_OUTROS = ['M5 12h.01M12 12h.01M19 12h.01', '#4A5568', '#E8EBF0'];
+const ICO_TIPO = {
+  Receita: ['M12 19V5M5 12l7-7 7 7', '#17803F', '#DDF1E4'],
+  Investimento: ['M4 17l6-6 4 4 7-7M15 8h6v6', '#1B3FBF', '#E2E8FB'],
+  'Entre contas': ['M7 7h13l-3-3M17 17H4l3 3', '#4A5568', '#E8EBF0'],
+  Detalhe: ['M5 12h.01M12 12h.01M19 12h.01', '#4A5568', '#E8EBF0'],
+};
+function icoDe(nome) { for (const [re, d, c, f] of CAT_ICONE) if (re.test(nome || '')) return [d, c, f]; return ICO_OUTROS; }
+function bolinha([d, cor, fundo], tam = 40) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', width: tam / 2, height: tam / 2, fill: 'none', stroke: cor, 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, v);
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', d); svg.append(p);
+  return h('span', { class: 'ico', style: `width:${tam}px;height:${tam}px;background:${fundo}` }, svg);
+}
+const icoPend = (tam = 40) => h('span', { class: 'ico pend', style: `width:${tam}px;height:${tam}px` }, '?');
+function icoLanc(l) {
+  if (pendente(l)) return icoPend(42);
+  if (l.conta_como === 'Gasto') return bolinha(l.categoria_id ? icoDe(nomeCat(l.categoria_id)) : ICO_OUTROS, 42);
+  return bolinha(ICO_TIPO[l.conta_como] || ICO_OUTROS, 42);
+}
+
 const ICONES = {
   inicio: 'M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
   lanc: 'M4 6h16M4 12h16M4 18h10',
@@ -182,12 +231,18 @@ async function telaInicio(wrap) {
   const filtrar = (id) => { st.filtroInicio = st.filtroInicio === id ? null : id; render(); };
 
   wrap.append(h('div', { class: 'hero' },
-    h('div', { class: 'linha1' }, seletorMes(render), h('span', { class: 'rotulo' }, filtro ? nomePessoa(filtro) : 'Família')),
-    h('span', { class: 'rotulo' }, filtro ? `Gasto de ${nomePessoa(filtro)} no mês` : 'Gasto no mês'),
+    h('div', { class: 'linha1' }, seletorMes(render), h('span', { class: 'selo' }, filtro ? nomePessoa(filtro) : 'Família')),
+    h('span', { class: 'rotulo', style: 'margin-top:8px' }, filtro ? `Gasto de ${nomePessoa(filtro)} no mês` : 'Gasto no mês'),
     h('span', { class: 'grande' }, R(total)),
-    h('span', { class: 'rotulo' }, filtro ? `de ${R(totalFamilia)} da família` : `Entradas no mês: ${R(receitas)}`),
-    prevMes ? h('span', { class: 'rotulo' }, `+ ${R(prevMes)} previsto até o fim do mês (parcelas e assinaturas)`) : null,
-    !filtro && invMes.length ? h('span', { class: 'rotulo' }, guardado >= 0 ? `Guardado no mês: ${R(guardado)}` : `Resgatado no mês: ${R(-guardado)}`) : null));
+    filtro ? h('span', { class: 'rotulo' }, `de ${R(totalFamilia)} da família`) : null,
+    prevMes ? h('span', { class: 'prev-hero' }, `+ ${R(prevMes)} previsto até o fim do mês`) : null));
+  const qtdPend = new Set(ps.filter((p) => !p.cat && pendente(p.l)).map((p) => p.l.id)).size;
+  const irPend = () => { st.aba = 'lanc'; st.soPendentes = true; st.pessoa = filtro || 'todos'; render(); };
+  wrap.append(h('div', { class: 'blocos' },
+    h('div', { class: 'bloco' }, h('span', { class: 'r' }, 'Entradas'), h('span', { class: 'n rec' }, R(receitas))),
+    h('div', { class: 'bloco' }, h('span', { class: 'r' }, guardado >= 0 ? 'Guardado' : 'Resgatado'), h('span', { class: 'n inv' }, R(Math.abs(guardado)))),
+    h('button', { class: 'bloco' + (qtdPend ? ' amb' : ''), onclick: irPend }, h('span', { class: 'r' }, 'A categorizar'),
+      h('span', { class: 'n' }, qtdPend ? `${qtdPend} ${qtdPend === 1 ? 'item' : 'itens'}` : 'Tudo certo'))));
   const corpo = h('div', { class: 'corpo' });
   wrap.append(corpo);
   if (filtro) {
@@ -200,7 +255,7 @@ async function telaInicio(wrap) {
   const porPessoa = {};
   for (const p of todas) porPessoa[p.pessoa || 'daniel'] = (porPessoa[p.pessoa || 'daniel'] || 0) + p.valor;
   const cardP = h('div', { class: 'card' }, h('h2', {}, 'Quem gastou'), h('div', { class: 'nota', style: 'margin-top:-6px' }, 'Toque num nome para ver só os gastos dele.'));
-  const cor = (id) => (id === 'helene' ? 'var(--helene)' : id === 'gabriel' ? '#4A6072' : id === 'outros' ? '#8A8F8B' : id === 'familia' ? '#2E7D9A' : 'var(--verde)');
+  const cor = (id) => (id === 'helene' ? 'var(--helene)' : id === 'gabriel' ? '#0E7C86' : id === 'outros' ? '#8A8F9B' : id === 'familia' ? '#6A3FB5' : 'var(--verde)');
   for (const pe of st.cad.pessoas) {
     const v = num(porPessoa[pe.id] || 0);
     if ((pe.id === 'outros' || pe.id === 'familia') && !v) continue;
@@ -222,12 +277,18 @@ async function telaInicio(wrap) {
   const cardC = h('div', { class: 'card' }, h('h2', {}, filtro ? `Por categoria · ${nomePessoa(filtro)}` : 'Por categoria'));
   if (!cats.length) cardC.append(h('div', { class: 'vazio' }, filtro ? 'Nenhum gasto dessa pessoa neste mês.' : 'Nenhum gasto neste mês.'));
   const nPend = new Set(ps.filter((p) => !p.cat && pendente(p.l)).map((p) => p.l.id)).size;
+  const maior = cats.length ? cats[0][1] : 0;
   for (const [id, v] of cats) {
     const pend = id === '0';
-    cardC.append(h('button', { class: 'lin', style: 'border:none;background:none;padding:2px 0;text-align:left;min-height:32px',
+    const ic = pend ? null : icoDe(nomeCat(Number(id)));
+    const pct = maior ? Math.max(3, Math.round((v / maior) * 100)) : 0;
+    cardC.append(h('button', { class: 'catlin',
       onclick: () => { st.aba = 'lanc'; st.soPendentes = pend; st.pessoa = filtro || 'todos'; render(); } },
-      h('span', { class: pend ? 'alerta' : '' }, pend ? `A categorizar (${nPend})` : nomeCat(Number(id))),
-      h('span', { class: 'v' + (pend ? ' alerta' : '') }, R(v))));
+      pend ? icoPend(38) : bolinha(ic, 38),
+      h('div', { class: 'catcorpo' },
+        h('div', { class: 'lin' }, h('span', { class: pend ? 'alerta' : '', style: 'font-weight:700' }, pend ? `A categorizar (${nPend})` : nomeCat(Number(id))),
+          h('span', { class: 'v' + (pend ? ' alerta' : '') }, R(v))),
+        h('div', { class: 'barra fina' }, h('div', { style: `width:${pct}%;background:${pend ? 'var(--laranja)' : ic[1]}` })))));
   }
   corpo.append(cardC);
 
@@ -331,10 +392,13 @@ function itemLanc(l) {
   else if (l.origem === 'aviso') tags.push(h('span', { class: 'tag amb' }, 'só aviso'));
   if (l.total_parcelas > 1) tags.push(h('span', { class: 'tag' }, `parcela ${l.parcela}/${l.total_parcelas}`));
   return h('button', { class: 'item' + (pendente(l) ? ' pend' : '') + (l.previsto ? ' prev' : ''), onclick: () => abrirLanc(l) },
-    h('div', { class: 't' }, h('span', { class: 'n' }, l.descricao || l.tipo), h('span', { class: classeV }, (l.conta_como === 'Receita' ? '+ ' : '') + R(l.valor))),
-    h('div', { class: 'd' }, `${hora(l.data_hora)} · ${cat} · ${l.banco || ''}${fim} · ${quem}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
-    tags.length ? h('div', {}, tags) : null,
-    l.observacao ? h('div', { class: 'd' }, `“${l.observacao}”`) : null);
+    icoLanc(l),
+    h('div', { class: 'itemcorpo' },
+      h('div', { class: 't' }, h('span', { class: 'n' }, l.descricao || l.tipo), h('span', { class: classeV }, (l.conta_como === 'Receita' ? '+ ' : '') + R(l.valor))),
+      h('div', { class: 'd' }, pendente(l) ? h('b', { class: 'alerta' }, 'Toque para escolher a categoria · ') : null,
+        `${hora(l.data_hora)} · ${pendente(l) ? '' : cat + ' · '}${l.banco || ''}${fim} · ${quem}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
+      tags.length ? h('div', {}, tags) : null,
+      l.observacao ? h('div', { class: 'd' }, `“${l.observacao}”`) : null));
 }
 
 // ----- Folha de edição -----
