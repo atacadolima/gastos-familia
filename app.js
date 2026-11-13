@@ -117,7 +117,11 @@ function porcoes(lancs) {
 /** Divisão só entre pessoas (mesma categoria em todas as partes) — feita pelos quadradinhos de "Quem". */
 function divisaoPorPessoa(l) {
   const ps = partesDe(l);
-  return ps.length > 1 && ps.every((p) => p.categoria_id === ps[0].categoria_id) && new Set(ps.map((p) => p.pessoa_id)).size === ps.length;
+  if (!(ps.length > 1 && ps.every((p) => p.categoria_id === ps[0].categoria_id) && new Set(ps.map((p) => p.pessoa_id)).size === ps.length)) return false;
+  // Divisão feita em "Dividir" (valores diferentes ou com observação em cada parte) não é a divisão simples por pessoa
+  if (ps.some((p) => p.nome_outro || (p.observacao && p.pessoa_id !== 'outros'))) return false;
+  const iguais = dividirIgual(Number(l.valor), ps.length).map((v) => Math.round(v * 100)).sort().join();
+  return ps.map((p) => Math.round(Number(p.valor) * 100)).sort().join() === iguais;
 }
 const divisaoPorCategoria = (l) => partesDe(l).length > 0 && !divisaoPorPessoa(l);
 /** Divide em centavos iguais; a sobra vai para os primeiros. */
@@ -673,6 +677,10 @@ function abrirDivisao(l) {
       if (d.error) throw d.error;
       const ins = await sb.from('partes').insert(linhas.map((x) => ({ lancamento_id: l.id, categoria_id: x.cat, pessoa_id: x.pessoa, valor: num(x.valor), observacao: (x.obs || '').trim() || null, nome_outro: x.pessoa === 'outros' ? ((x.quem || '').trim() || null) : null })));
       if (ins.error) throw ins.error;
+      // A categoria da maior parte fica também no lançamento (assim nunca volta para "A categorizar")
+      const maior = linhas.reduce((m, x) => (Number(x.valor) > Number(m.valor) ? x : m), linhas[0]);
+      const up = await sb.from('lancamentos').update({ categoria_id: maior.cat }).eq('id', l.id);
+      if (up.error) throw up.error;
       fecharSheet(); await carregarMes(); render(); toast('Divisão salva.');
     } catch (e) { salvar.disabled = false; toast('Não salvou: ' + erroMsg(e), 4000); }
   };
