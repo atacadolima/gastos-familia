@@ -173,6 +173,10 @@ Deno.serve(async (req) => {
     // Pagamento de fatura feito pela conta corrente: as compras já contam no cartão, então não é gasto.
     const pf = await db.rpc('marcar_pagamentos_fatura');
     if (pf.error) throw pf.error;
+    // Parcelas futuras e assinaturas previstas; parcela nova herda a categoria da série
+    const gp = await db.rpc('gerar_previstos');
+    if (gp.error) throw gp.error;
+    resumo.previstos = gp.data;
     Object.assign(resumo, { investimentos_lidos: investimentosLidos, faturas_pagas: pf.data, novas, casadas_com_aviso: casadas, so_no_banco: criadas });
     await db.from('sync_log').update({ fim: new Date().toISOString(), ok: true, detalhe: JSON.stringify(resumo) }).eq('id', log.data!.id);
     return json({ ok: true, ...resumo });

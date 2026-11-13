@@ -107,7 +107,7 @@ async function carregarMes() {
 function porcoes(lancs) {
   const out = [];
   for (const l of lancs) {
-    if (l.conta_como !== 'Gasto') continue;
+    if (l.conta_como !== 'Gasto' || l.previsto) continue;
     const ps = partesDe(l);
     if (ps.length) for (const p of ps) out.push({ l, valor: Number(p.valor), cat: p.categoria_id, pessoa: p.pessoa_id || l.pessoa_id });
     else out.push({ l, valor: Number(l.valor), cat: l.categoria_id, pessoa: l.pessoa_id });
@@ -125,7 +125,7 @@ function dividirIgual(total, n) {
   const c = Math.round(total * 100), base = Math.floor(c / n), sobra = c - base * n;
   return Array.from({ length: n }, (_, i) => (base + (i < sobra ? 1 : 0)) / 100);
 }
-const pendente = (l) => l.conta_como === 'Gasto' && !l.categoria_id && !partesDe(l).length;
+const pendente = (l) => l.conta_como === 'Gasto' && !l.previsto && !l.categoria_id && !partesDe(l).length;
 
 // ---------- telas ----------
 function render() {
@@ -174,7 +174,9 @@ async function telaInicio(wrap) {
   const filtro = st.filtroInicio || null;
   const ps = filtro ? todas.filter((p) => (p.pessoa || 'daniel') === filtro) : todas;
   const total = num(ps.reduce((s, p) => s + p.valor, 0));
-  const receitas = num(st.lancs.filter((l) => l.conta_como === 'Receita').reduce((s, l) => s + Number(l.valor), 0));
+  const receitas = num(st.lancs.filter((l) => l.conta_como === 'Receita' && !l.previsto).reduce((s, l) => s + Number(l.valor), 0));
+  const prevMes = num(st.lancs.filter((l) => l.previsto && l.conta_como === 'Gasto' && (!st.filtroInicio || l.pessoa_id === st.filtroInicio))
+    .reduce((s, l) => s + Number(l.valor), 0));
   const invMes = st.lancs.filter((l) => l.conta_como === 'Investimento');
   const guardado = num(invMes.reduce((s, l) => s + (l.resgate ? -1 : 1) * Number(l.valor), 0));
   const filtrar = (id) => { st.filtroInicio = st.filtroInicio === id ? null : id; render(); };
@@ -184,6 +186,7 @@ async function telaInicio(wrap) {
     h('span', { class: 'rotulo' }, filtro ? `Gasto de ${nomePessoa(filtro)} no mês` : 'Gasto no mês'),
     h('span', { class: 'grande' }, R(total)),
     h('span', { class: 'rotulo' }, filtro ? `de ${R(totalFamilia)} da família` : `Entradas no mês: ${R(receitas)}`),
+    prevMes ? h('span', { class: 'rotulo' }, `+ ${R(prevMes)} previsto até o fim do mês (parcelas e assinaturas)`) : null,
     !filtro && invMes.length ? h('span', { class: 'rotulo' }, guardado >= 0 ? `Guardado no mês: ${R(guardado)}` : `Resgatado no mês: ${R(-guardado)}`) : null));
   const corpo = h('div', { class: 'corpo' });
   wrap.append(corpo);
@@ -227,6 +230,24 @@ async function telaInicio(wrap) {
       h('span', { class: 'v' + (pend ? ' alerta' : '') }, R(v))));
   }
   corpo.append(cardC);
+
+  // Já comprometido nos próximos meses (parcelas e assinaturas previstas)
+  const prox = addMes(st.mes, 1);
+  const rp = await sb.from('lancamentos').select('data_hora, valor').eq('previsto', true).eq('conta_como', 'Gasto')
+    .gte('data_hora', prox.toISOString()).lt('data_hora', addMes(prox, 6).toISOString());
+  if (!rp.error && rp.data.length) {
+    const porMes = {};
+    for (const x of rp.data) { const d = new Date(x.data_hora); const k = `${d.getFullYear()}-${d.getMonth()}`; porMes[k] = (porMes[k] || 0) + Number(x.valor); }
+    const cardJ = h('div', { class: 'card' }, h('h2', {}, 'Já comprometido nos próximos meses'));
+    for (let i = 0; i < 6; i++) {
+      const m = addMes(prox, i); const v = porMes[`${m.getFullYear()}-${m.getMonth()}`];
+      if (v) cardJ.append(h('button', { class: 'lin', style: 'border:none;background:none;padding:2px 0;text-align:left;min-height:32px',
+        onclick: async () => { st.mes = m; st.aba = 'lanc'; await carregarMes(); render(); } },
+        h('span', {}, nomeMes(m)), h('span', { class: 'v' }, R(v))));
+    }
+    cardJ.append(h('div', { class: 'nota' }, 'Parcelas que ainda vão cair e assinaturas que se repetem todo mês.'));
+    corpo.append(cardJ);
+  }
 
   // Investimentos (caixinhas)
   await carregarCaixinhas();
@@ -305,10 +326,11 @@ function itemLanc(l) {
   const ab = abastDe(l);
   const classeV = l.conta_como === 'Receita' ? 'v rec' : l.conta_como === 'Gasto' ? 'v' : l.conta_como === 'Investimento' ? 'v inv' : 'v neu';
   const tags = [];
-  if (l.conferido) tags.push(h('span', { class: 'tag ok' }, l.aviso_id ? 'aviso + banco' : 'banco'));
+  if (l.previsto) tags.push(h('span', { class: 'tag' }, l.serie && l.serie.startsWith('rec:') ? 'previsto · assinatura' : 'previsto'));
+  else if (l.conferido) tags.push(h('span', { class: 'tag ok' }, l.aviso_id ? 'aviso + banco' : 'banco'));
   else if (l.origem === 'aviso') tags.push(h('span', { class: 'tag amb' }, 'só aviso'));
   if (l.total_parcelas > 1) tags.push(h('span', { class: 'tag' }, `parcela ${l.parcela}/${l.total_parcelas}`));
-  return h('button', { class: 'item' + (pendente(l) ? ' pend' : ''), onclick: () => abrirLanc(l) },
+  return h('button', { class: 'item' + (pendente(l) ? ' pend' : '') + (l.previsto ? ' prev' : ''), onclick: () => abrirLanc(l) },
     h('div', { class: 't' }, h('span', { class: 'n' }, l.descricao || l.tipo), h('span', { class: classeV }, (l.conta_como === 'Receita' ? '+ ' : '') + R(l.valor))),
     h('div', { class: 'd' }, `${hora(l.data_hora)} · ${cat} · ${l.banco || ''}${fim} · ${quem}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
     tags.length ? h('div', {}, tags) : null,
@@ -449,9 +471,15 @@ function abrirLanc(l) {
           litros: litros.value ? Number(String(litros.value).replace(',', '.')) : null, tanque_cheio: cheio.checked });
         if (r3.error) throw r3.error;
       }
+      // Mesma compra parcelada / mesma assinatura: aplica em toda a série
+      let daSerie = 0;
+      if (l.serie) { const rs = await sb.rpc('aplicar_serie', { p_id: l.id }); if (!rs.error) daSerie = rs.data || 0; }
       fecharSheet();
       await carregarCaixinhas(); await carregarMes(); render();
-      toast(extras ? `Salvo. Mais ${extras} lançamento(s) categorizados.` : 'Salvo.');
+      const msgs = [];
+      if (daSerie) msgs.push(`${daSerie} da mesma série`);
+      if (extras) msgs.push(`${extras} com o mesmo nome`);
+      toast(msgs.length ? `Salvo. Também atualizados: ${msgs.join(' e ')}.` : 'Salvo.');
     } catch (e) { salvar.disabled = false; toast('Não salvou: ' + erroMsg(e), 4000); }
   } }, 'Salvar');
 
@@ -462,6 +490,9 @@ function abrirLanc(l) {
       h('div', { class: 'lin' }, h('span', {}, 'Data'), h('span', {}, `${dataCurta(l.data_hora)} ${hora(l.data_hora)}`)),
       h('div', { class: 'lin' }, h('span', {}, 'Onde'), h('span', {}, `${l.banco || ''} ${l.final_cartao ? 'final ' + l.final_cartao : ''} · ${l.tipo || ''}`)),
       l.total_parcelas > 1 ? h('div', { class: 'lin' }, h('span', {}, 'Parcela'), h('span', {}, `${l.parcela}/${l.total_parcelas}`)) : null,
+      l.serie ? h('div', { class: 'nota', style: 'color:var(--verde);font-weight:600' }, l.serie.startsWith('rec:')
+        ? 'Assinatura: o que você mudar aqui vale para todos os meses.' : 'Compra parcelada: o que você mudar aqui vale para todas as parcelas.') : null,
+      l.previsto ? h('div', { class: 'nota' }, 'Previsto: ainda não caiu. Quando o lançamento real chegar, ele toma o lugar deste.') : null,
       h('div', { class: 'nota' }, l.conferido ? (l.aviso_id ? 'Conferido: veio pelo aviso e pelo banco.' : 'Veio pelo banco (Open Finance).')
         : 'Veio só pelo aviso do celular; o banco ainda não confirmou.')),
     h('label', { class: 'campo' }, generico ? 'Nome (o banco não informou a loja — escreva onde foi)' : 'Nome', nome),

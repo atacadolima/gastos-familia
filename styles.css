@@ -95,3 +95,4 @@ nav.tabs button.on { color: var(--verde); font-weight: 700; }
 .erro { color: var(--erro); font-size: 14px; }
 .item-nome:disabled { color: inherit; cursor: default; opacity: 1; }
 .item .v.inv { color: #2E5E9A; }
+.item.prev { opacity: .62; border: 1px dashed var(--borda); }
