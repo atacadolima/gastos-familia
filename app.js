@@ -45,6 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
+const VERSAO_TELAS = 'v21';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -358,6 +359,7 @@ async function telaInicio(wrap) {
   }
   cardF.append(h('div', { class: 'nota' }, 'Cartão: valor em aberto informado pelo banco. Atualiza 2x por dia.'));
   corpo.append(cardF);
+  corpo.append(h('div', { class: 'rodape' }, vInst ? `Versão do app ${Math.floor(vInst / 10)}.${vInst % 10} · telas ${VERSAO_TELAS}` : `Telas ${VERSAO_TELAS}`));
 }
 
 // ----- Lançamentos -----

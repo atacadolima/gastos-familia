@@ -137,3 +137,4 @@ nav.tabs button.on svg { background: var(--verde-claro); border-radius: 999px; w
 .tag.compra { background: var(--verde-claro); color: var(--verde); }
 .item.atrasado { background: var(--ambar-fundo); border: 1.5px dashed var(--laranja); }
 .item.atrasado .n, .item.atrasado .v { color: var(--texto); }
+.rodape { text-align: center; font-size: 12px; color: var(--suave); padding: 4px 0 12px; }
