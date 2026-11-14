@@ -249,6 +249,16 @@ async function telaInicio(wrap) {
       h('span', { class: 'n' }, qtdPend ? `${qtdPend} ${qtdPend === 1 ? 'item' : 'itens'}` : 'Tudo certo'))));
   const corpo = h('div', { class: 'corpo' });
   wrap.append(corpo);
+  // App do Android desatualizado: oferece atualizar (o número sobe a cada APK publicado)
+  const APK_ATUAL = 6;
+  let vInst = 0;
+  try { vInst = window.GastosAndroid && window.GastosAndroid.versao ? Number(window.GastosAndroid.versao()) : 0; } catch {}
+  if (vInst && vInst < APK_ATUAL) {
+    corpo.append(h('div', { class: 'card', style: 'background:var(--ambar-fundo);border:1.5px solid var(--laranja)' },
+      h('h2', {}, 'Tem versão nova do app'),
+      h('div', { class: 'nota', style: 'color:var(--texto)' }, 'Toque em Atualizar e depois em Instalar. Seus dados continuam no app.'),
+      h('button', { class: 'btn', onclick: () => window.GastosAndroid.verificarAtualizacao() }, 'Atualizar o app')));
+  }
   if (filtro) {
     corpo.append(h('div', { class: 'card', style: 'flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--verde-claro)' },
       h('span', {}, 'Mostrando: ', h('b', {}, nomePessoa(filtro))),
