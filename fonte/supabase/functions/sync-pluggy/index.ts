@@ -182,6 +182,8 @@ Deno.serve(async (req) => {
     // Parcelas futuras e assinaturas previstas; parcela nova herda a categoria da série
     const gp = await db.rpc('gerar_previstos');
     if (gp.error) throw gp.error;
+    const gc = await db.rpc('gerar_compromissos');
+    if (gc.error) throw gc.error;
     resumo.previstos = gp.data;
     Object.assign(resumo, { investimentos_lidos: investimentosLidos, faturas_pagas: pf.data, novas, casadas_com_aviso: casadas, so_no_banco: criadas });
     await db.from('sync_log').update({ fim: new Date().toISOString(), ok: true, detalhe: JSON.stringify(resumo) }).eq('id', log.data!.id);

@@ -1,6 +1,6 @@
 // Guarda só as telas do app para abrir rápido. Os dados vêm sempre da internet.
-const VERSAO = 'gastos-v19';
-const TELAS = ['./', 'index.html', 'styles.css?v=19', 'app.js?v=19', 'manifest.webmanifest', 'icons/icon-192.png', 'vendor/supabase.min.js?v=2.50.0', 'vendor/fonts/manrope-latin-500-normal.woff2', 'vendor/fonts/manrope-latin-700-normal.woff2', 'vendor/fonts/manrope-latin-800-normal.woff2'];
+const VERSAO = 'gastos-v20';
+const TELAS = ['./', 'index.html', 'styles.css?v=20', 'app.js?v=20', 'manifest.webmanifest', 'icons/icon-192.png', 'vendor/supabase.min.js?v=2.50.0', 'vendor/fonts/manrope-latin-500-normal.woff2', 'vendor/fonts/manrope-latin-700-normal.woff2', 'vendor/fonts/manrope-latin-800-normal.woff2'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSAO).then((c) => c.addAll(TELAS)).then(() => self.skipWaiting()));

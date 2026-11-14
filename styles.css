@@ -135,3 +135,5 @@ nav.tabs button.on svg { background: var(--verde-claro); border-radius: 999px; w
 .parte-x { min-height: 36px; min-width: 36px; border: none; background: #E8EBF0; border-radius: 999px; }
 .partes-lista { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
 .tag.compra { background: var(--verde-claro); color: var(--verde); }
+.item.atrasado { background: var(--ambar-fundo); border: 1.5px dashed var(--laranja); }
+.item.atrasado .n, .item.atrasado .v { color: var(--texto); }

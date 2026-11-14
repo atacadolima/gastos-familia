@@ -377,6 +377,9 @@ function telaLancamentos(wrap) {
   wrap.append(cab);
 
   const corpo = h('div', { class: 'corpo', style: 'gap:8px' });
+  corpo.append(h('div', { class: 'btns' },
+    h('button', { class: 'btn', onclick: () => abrirCompromisso(null) }, '+ Compromisso mensal'),
+    h('button', { class: 'btn sec', onclick: listaCompromissos }, 'Ver compromissos')));
   wrap.append(corpo);
   let lista = st.lancs.filter((l) => (st.verTransf ? true : ['Gasto', 'Receita', 'Investimento'].includes(l.conta_como)));
   if (st.pessoa !== 'todos') lista = lista.filter((l) => l.pessoa_id === st.pessoa || partesDe(l).some((p) => p.pessoa_id === st.pessoa));
@@ -403,17 +406,21 @@ function itemLanc(l) {
   const ab = abastDe(l);
   const classeV = l.conta_como === 'Receita' ? 'v rec' : l.conta_como === 'Gasto' ? 'v' : l.conta_como === 'Investimento' ? 'v inv' : 'v neu';
   const tags = [];
-  if (l.previsto) tags.push(h('span', { class: 'tag' }, l.serie && l.serie.startsWith('rec:') ? 'previsto · assinatura' : 'previsto'));
+  const atrasado = l.previsto && l.compromisso_id && new Date(l.data_hora) < new Date(Date.now() - 86400000);
+  if (atrasado) tags.push(h('span', { class: 'tag amb' }, `venceu dia ${dataCurta(l.data_hora)} · não pago`));
+  else if (l.previsto && l.compromisso_id) tags.push(h('span', { class: 'tag' }, `compromisso · vence dia ${dataCurta(l.data_hora)}`));
+  else if (l.previsto) tags.push(h('span', { class: 'tag' }, l.serie && l.serie.startsWith('rec:') ? 'previsto · assinatura' : 'previsto'));
+  if (!l.previsto && l.compromisso_id) tags.push(h('span', { class: 'tag ok' }, 'compromisso pago'));
   else if (l.conferido) tags.push(h('span', { class: 'tag ok' }, l.aviso_id ? 'aviso + banco' : 'banco'));
   else if (l.origem === 'aviso') tags.push(h('span', { class: 'tag amb' }, 'só aviso'));
   if (l.total_parcelas > 1) tags.push(h('span', { class: 'tag' }, `parcela ${l.parcela}/${l.total_parcelas}`));
   if (l.total_parcelas > 1 && l.data_compra) tags.push(h('span', { class: 'tag compra' }, `comprado em ${dataCompra(l.data_compra)}`));
-  return h('button', { class: 'item' + (pendente(l) ? ' pend' : '') + (l.previsto ? ' prev' : ''), onclick: () => abrirLanc(l) },
+  return h('button', { class: 'item' + (pendente(l) ? ' pend' : '') + (l.previsto ? ' prev' : '') + (atrasado ? ' atrasado' : ''), onclick: () => abrirLanc(l) },
     icoLanc(l),
     h('div', { class: 'itemcorpo' },
       h('div', { class: 't' }, h('span', { class: 'n' }, l.descricao || l.tipo), h('span', { class: classeV }, (l.conta_como === 'Receita' ? '+ ' : '') + R(l.valor))),
       h('div', { class: 'd' }, pendente(l) ? h('b', { class: 'alerta' }, 'Toque para escolher a categoria · ') : null,
-        `${hora(l.data_hora)} · ${pendente(l) ? '' : cat + ' · '}${l.banco || ''}${fim} · ${quem}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
+        `${hora(l.data_hora)} · ${pendente(l) ? '' : cat + ' · '}${l.banco ? l.banco + fim + ' · ' : ''}${quem}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
       tags.length ? h('div', {}, tags) : null,
       l.observacao ? h('div', { class: 'd' }, `“${l.observacao}”`) : null,
       ps.length && !porPes ? h('div', { class: 'partes-lista' }, ps.map((p) => h('div', { class: 'd' },
@@ -441,6 +448,7 @@ function padraoSugerido(desc) {
 }
 
 function abrirLanc(l) {
+  if (l.previsto && l.compromisso_id) return abrirPrevistoCompromisso(l);
   const catSel = h('select', {}, opcoes(catsOrdem(), l.categoria_id, 'A categorizar'), h('option', { value: '__nova' }, '+ Nova categoria…'));
   const novaCat = h('input', { placeholder: 'Nome da nova categoria', maxlength: '40' });
   const blocoNova = h('div', { style: 'display:flex;gap:8px' }, h('div', { class: 'campo', style: 'flex-grow:1' }, novaCat),
@@ -705,6 +713,113 @@ function abrirDivisao(l) {
         await sb.from('partes').delete().eq('lancamento_id', l.id); fecharSheet(); await carregarMes(); render(); toast('Divisão desfeita.');
       } }, 'Desfazer divisão') : null));
   desenhar();
+}
+
+// ----- Compromissos mensais (salário da funcionária, escola, luz…) -----
+async function abrirCompromisso(c) {
+  const novo = !c;
+  c = c || { nome: '', valor: '', dia: new Date().getDate(), categoria_id: null, pessoa_id: 'familia', conta_como: 'Gasto', varia: false, palavra: '', meses: null,
+    inicio: `${st.mes.getFullYear()}-${String(st.mes.getMonth() + 1).padStart(2, '0')}-01` };
+  const nome = h('input', { value: c.nome, placeholder: 'ex.: Salário da funcionária', maxlength: '60' });
+  const valor = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: c.valor || '' });
+  const dia = h('input', { type: 'number', inputmode: 'numeric', min: '1', max: '31', value: c.dia });
+  const como = h('select', {}, opcoes([['Gasto', 'Gasto (sai dinheiro)'], ['Receita', 'Entrada (entra dinheiro)']], c.conta_como));
+  const cat = h('select', {}, opcoes(catsOrdem(), c.categoria_id, 'Escolha a categoria'));
+  const quem = h('select', {}, opcoes(st.cad.pessoas.map((k) => [k.id, k.nome]), c.pessoa_id || 'familia'));
+  const repete = h('select', {}, opcoes([['sempre', 'Todo mês, sem data para acabar'], ['meses', 'Por alguns meses']], c.meses ? 'meses' : 'sempre'));
+  const meses = h('input', { type: 'number', inputmode: 'numeric', min: '1', max: '120', value: c.meses || '' });
+  const inicio = h('input', { type: 'month', value: String(c.inicio).slice(0, 7) });
+  const varia = h('input', { type: 'checkbox', checked: !!c.varia });
+  const palavra = h('input', { value: c.palavra || '', placeholder: 'ex.: nome da funcionária, CEMIG, COPASA', maxlength: '40' });
+  const campoMeses = h('label', { class: 'campo' }, 'Quantos meses', meses);
+  const campoCat = h('label', { class: 'campo' }, 'Categoria', cat);
+  const mostrar = () => { campoMeses.hidden = repete.value !== 'meses'; campoCat.hidden = como.value !== 'Gasto'; };
+  repete.onchange = mostrar; como.onchange = mostrar;
+  const salvar = h('button', { class: 'btn', onclick: async () => {
+    const v = Number(String(valor.value).replace(',', '.')), d = Number(dia.value);
+    if (nome.value.trim().length < 2) return toast('Escreva o nome do compromisso.');
+    if (!(v > 0)) return toast('Informe o valor.');
+    if (!(d >= 1 && d <= 31)) return toast('O dia tem que ser de 1 a 31.');
+    if (como.value === 'Gasto' && !cat.value) return toast('Escolha a categoria.');
+    if (repete.value === 'meses' && !(Number(meses.value) > 0)) return toast('Informe quantos meses.');
+    const dados = { nome: nome.value.trim(), valor: v, dia: d, conta_como: como.value, categoria_id: como.value === 'Gasto' ? Number(cat.value) : null,
+      pessoa_id: quem.value, varia: varia.checked, palavra: palavra.value.trim() || null, meses: repete.value === 'meses' ? Number(meses.value) : null,
+      inicio: (inicio.value || String(c.inicio).slice(0, 7)) + '-01', ativo: true };
+    salvar.disabled = true;
+    try {
+      const r = novo ? await sb.from('compromissos').insert(dados).select().single() : await sb.from('compromissos').update(dados).eq('id', c.id).select().single();
+      if (r.error) throw r.error;
+      const g = await sb.rpc('refazer_compromisso', { p_id: r.data.id });
+      if (g.error) throw g.error;
+      fecharSheet(); await carregarMes(); render();
+      toast(g.data && g.data.pagos_reconhecidos ? 'Compromisso salvo. Já achei o pagamento deste mês.' : 'Compromisso salvo. Ele aparece como previsto nos próximos meses.', 4000);
+    } catch (e) { salvar.disabled = false; toast('Não salvou: ' + erroMsg(e), 4000); }
+  } }, 'Salvar');
+  const encerrar = novo ? null : h('button', { class: 'btn perigo', onclick: async () => {
+    const r = await sb.from('compromissos').update({ ativo: false }).eq('id', c.id);
+    if (r.error) return toast('Não encerrou: ' + erroMsg(r.error), 4000);
+    await sb.rpc('gerar_compromissos'); fecharSheet(); await carregarMes(); render(); toast('Compromisso encerrado. Os previstos futuros saíram.');
+  } }, 'Encerrar compromisso');
+  abrirSheet(
+    h('h3', {}, novo ? 'Novo compromisso mensal' : 'Editar compromisso'),
+    h('label', { class: 'campo' }, 'Nome', nome),
+    h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Valor (R$)', valor), h('label', { class: 'campo' }, 'Dia do mês', dia)),
+    h('label', { class: 'campo' }, 'Entra como', como),
+    campoCat,
+    h('label', { class: 'campo' }, 'Quem', quem),
+    h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Repete', repete), h('label', { class: 'campo' }, 'Começa em', inicio)),
+    campoMeses,
+    h('label', { class: 'check' }, varia, 'O valor muda todo mês (luz, água…) — uso como estimativa'),
+    h('label', { class: 'campo' }, 'Como aparece no banco (opcional, ajuda a reconhecer o pagamento)', palavra),
+    h('div', { class: 'nota' }, 'Ele aparece como previsto em todos os meses. Quando o pagamento cair no banco (mesmo valor, perto do dia), o app troca o previsto pelo real sozinho. Se pagar em dinheiro, abra o previsto e toque em "Marcar como pago".'),
+    h('div', { class: 'btns' }, salvar, encerrar));
+  mostrar();
+}
+
+async function listaCompromissos() {
+  const r = await sb.from('compromissos').select('*').order('ativo', { ascending: false }).order('dia');
+  if (r.error) return toast('Não carregou: ' + erroMsg(r.error), 4000);
+  const ativos = r.data.filter((c) => c.ativo);
+  const total = (tipo) => ativos.filter((c) => c.conta_como === tipo).reduce((s, c) => s + Number(c.valor), 0);
+  const lista = r.data.map((c) => h('button', { class: 'item' + (c.ativo ? '' : ' prev'), onclick: () => abrirCompromisso(c) },
+    c.conta_como === 'Receita' ? bolinha(ICO_TIPO.Receita, 42) : bolinha(icoDe(nomeCat(c.categoria_id)), 42),
+    h('div', { class: 'itemcorpo' },
+      h('div', { class: 't' }, h('span', { class: 'n' }, c.nome), h('span', { class: 'v' + (c.conta_como === 'Receita' ? ' rec' : '') }, (c.varia ? '~ ' : '') + R(c.valor))),
+      h('div', { class: 'd' }, `todo dia ${c.dia} · ${c.conta_como === 'Receita' ? 'Entrada' : nomeCat(c.categoria_id)} · ${nomePessoa(c.pessoa_id)}`
+        + (c.meses ? ` · por ${c.meses} ${c.meses === 1 ? 'mês' : 'meses'}` : '') + (c.ativo ? '' : ' · encerrado')))));
+  abrirSheet(
+    h('h3', {}, 'Compromissos mensais'),
+    ativos.length ? h('div', { class: 'card', style: 'gap:6px' },
+      h('div', { class: 'lin' }, h('span', {}, 'Gastos fixos por mês'), h('span', { class: 'v' }, R(total('Gasto')))),
+      total('Receita') ? h('div', { class: 'lin' }, h('span', {}, 'Entradas fixas por mês'), h('span', { class: 'v', style: 'color:var(--receita)' }, R(total('Receita')))) : null) : null,
+    r.data.length ? lista : h('div', { class: 'vazio' }, 'Nenhum compromisso ainda.'),
+    h('button', { class: 'btn', onclick: () => abrirCompromisso(null) }, '+ Compromisso mensal'));
+}
+
+function abrirPrevistoCompromisso(l) {
+  const pagar = h('button', { class: 'btn', onclick: async () => {
+    pagar.disabled = true;
+    const agora = new Date();
+    const mesmoMes = new Date(l.data_hora).getMonth() === agora.getMonth() && new Date(l.data_hora).getFullYear() === agora.getFullYear();
+    const r = await sb.from('lancamentos').update({ previsto: false, tipo: 'Pago à parte', data_hora: mesmoMes ? agora.toISOString() : l.data_hora,
+      atualizado_em: agora.toISOString() }).eq('id', l.id);
+    if (r.error) { pagar.disabled = false; return toast('Não marcou: ' + erroMsg(r.error), 4000); }
+    fecharSheet(); await carregarMes(); render(); toast('Marcado como pago.');
+  } }, 'Marcar como pago');
+  abrirSheet(
+    h('h3', {}, l.descricao),
+    h('div', { class: 'card', style: 'gap:6px' },
+      h('div', { class: 'lin' }, h('span', {}, 'Valor'), h('span', { class: 'v' }, R(l.valor))),
+      h('div', { class: 'lin' }, h('span', {}, 'Vence'), h('span', {}, dataCurta(l.data_hora))),
+      h('div', { class: 'lin' }, h('span', {}, 'Categoria'), h('span', {}, l.conta_como === 'Receita' ? 'Entrada' : nomeCat(l.categoria_id))),
+      h('div', { class: 'lin' }, h('span', {}, 'Quem'), h('span', {}, nomePessoa(l.pessoa_id))),
+      h('div', { class: 'nota' }, 'Compromisso mensal previsto. Quando o pagamento cair no banco, ele toma o lugar deste sozinho. Pagou em dinheiro ou por fora? Toque em "Marcar como pago".')),
+    h('div', { class: 'btns' }, pagar,
+      h('button', { class: 'btn sec', onclick: async () => {
+        const r = await sb.from('compromissos').select('*').eq('id', l.compromisso_id).single();
+        if (r.error) return toast('Não abriu: ' + erroMsg(r.error), 4000);
+        abrirCompromisso(r.data);
+      } }, 'Editar compromisso')));
 }
 
 // ----- Carro -----
@@ -1080,6 +1195,7 @@ async function iniciar() {
   try {
     if (st.papel === 'compras') return await telaComprasSimples();
     await carregarCadastros();
+    try { await sb.rpc('gerar_compromissos'); } catch {}
     await carregarMes();
     render();
   } catch (e) {
