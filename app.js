@@ -1,5 +1,5 @@
 'use strict';
-// Gastos da Família — app do Daniel e da Helene.
+// Mutirão (antes "Gastos da Família") — app do Daniel e da Helene. Juntos, a conta fecha.
 // Os dados ficam no Supabase, protegidos por login: só quem está na tabela "membros" enxerga.
 
 const SB_URL = 'https://cjltedcpwmaqluvhybih.supabase.co';
@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v22';
+const VERSAO_TELAS = 'v23';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -237,7 +237,8 @@ async function telaInicio(wrap) {
   const filtrar = (id) => { st.filtroInicio = st.filtroInicio === id ? null : id; render(); };
 
   wrap.append(h('div', { class: 'hero' },
-    h('div', { class: 'linha1' }, seletorMes(render), h('span', { class: 'selo' }, filtro ? nomePessoa(filtro) : 'Família')),
+    h('div', { class: 'linha1' }, h('span', { class: 'marca' }, h('img', { src: 'icons/icon-192.png', alt: '' }), 'Mutirão'), h('span', { class: 'selo' }, filtro ? nomePessoa(filtro) : 'Família')),
+    seletorMes(render),
     h('span', { class: 'rotulo', style: 'margin-top:8px' }, filtro ? `Gasto de ${nomePessoa(filtro)} no mês` : 'Gasto no mês'),
     h('span', { class: 'grande' }, R(total)),
     filtro ? h('span', { class: 'rotulo' }, `de ${R(totalFamilia)} da família`) : null,
@@ -252,7 +253,7 @@ async function telaInicio(wrap) {
   const corpo = h('div', { class: 'corpo' });
   wrap.append(corpo);
   // App do Android desatualizado: oferece atualizar (o número sobe a cada APK publicado)
-  const APK_ATUAL = 6;
+  const APK_ATUAL = 7;
   let vInst = 0;
   try { vInst = window.GastosAndroid && window.GastosAndroid.versao ? Number(window.GastosAndroid.versao()) : 0; } catch {}
   if (vInst && vInst < APK_ATUAL) {
@@ -271,7 +272,7 @@ async function telaInicio(wrap) {
   const porPessoa = {};
   for (const p of todas) porPessoa[p.pessoa || 'daniel'] = (porPessoa[p.pessoa || 'daniel'] || 0) + p.valor;
   const cardP = h('div', { class: 'card' }, h('h2', {}, 'Quem gastou'), h('div', { class: 'nota', style: 'margin-top:-6px' }, 'Toque num nome para ver só os gastos dele.'));
-  const cor = (id) => (id === 'helene' ? 'var(--helene)' : id === 'gabriel' ? '#0E7C86' : id === 'outros' ? '#8A8F9B' : id === 'familia' ? '#6A3FB5' : 'var(--verde)');
+  const cor = (id) => (id === 'helene' ? 'var(--helene)' : id === 'gabriel' ? '#1F5FAF' : id === 'outros' ? '#8A8F9B' : id === 'familia' ? '#6A3FB5' : 'var(--verde)');
   for (const pe of st.cad.pessoas) {
     const v = num(porPessoa[pe.id] || 0);
     if ((pe.id === 'outros' || pe.id === 'familia') && !v) continue;
@@ -1359,7 +1360,8 @@ function telaLogin(msg) {
     else iniciar();
   } },
     h('img', { class: 'logo', src: 'icons/icon-192.png', alt: '' }),
-    h('h1', {}, 'Gastos da Família'),
+    h('h1', {}, 'Mutirão'),
+    h('p', { class: 'lema' }, 'Juntos, a conta fecha.'),
     h('label', { class: 'campo' }, 'E-mail', email),
     h('label', { class: 'campo' }, 'Senha', senha),
     erro, entrar,

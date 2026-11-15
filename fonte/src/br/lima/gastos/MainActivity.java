@@ -16,7 +16,7 @@ import android.webkit.WebViewClient;
 
 import org.json.JSONObject;
 
-/** Tela principal: o app Gastos da Família (site), com o leitor de avisos rodando por baixo. */
+/** Tela principal: o app Mutirão (site), com o leitor de avisos rodando por baixo. */
 public final class MainActivity extends Activity {
 
     static final String SITE = "https://atacadolima.github.io/gastos-familia/";
@@ -25,9 +25,9 @@ public final class MainActivity extends Activity {
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        getWindow().setStatusBarColor(0xFF1B3FBF);
+        getWindow().setStatusBarColor(0xFF0F766E);
         web = new WebView(this);
-        web.setBackgroundColor(Color.parseColor("#F4F5F3"));
+        web.setBackgroundColor(Color.parseColor("#EEF3F2"));
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);

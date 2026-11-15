@@ -58,7 +58,7 @@ public final class Atualizador {
     private static void perguntar(Activity a, String nome, String notas) {
         if (a.isFinishing()) return;
         new AlertDialog.Builder(a)
-                .setTitle("Atualização do Gastos (" + nome + ")")
+                .setTitle("Atualização do Mutirão (" + nome + ")")
                 .setMessage((notas.isEmpty() ? "" : notas + "\n\n") + "Baixar e instalar agora? Os seus dados continuam no app.")
                 .setPositiveButton("Atualizar", (d, w) -> instalar(a))
                 .setNegativeButton("Depois", null)
@@ -67,7 +67,7 @@ public final class Atualizador {
 
     private static void instalar(Activity a) {
         if (Build.VERSION.SDK_INT >= 26 && !a.getPackageManager().canRequestPackageInstalls()) {
-            Toast.makeText(a, "Permita que o Gastos instale atualizações e volte para o app.", Toast.LENGTH_LONG).show();
+            Toast.makeText(a, "Permita que o Mutirão instale atualizações e volte para o app.", Toast.LENGTH_LONG).show();
             a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + a.getPackageName())));
             ultimaChecagem = 0; // pergunta de novo ao voltar
             return;
