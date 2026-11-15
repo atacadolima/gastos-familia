@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v21';
+const VERSAO_TELAS = 'v22';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -137,7 +137,7 @@ function render() {
   if (st.papel === 'compras') return telaComprasSimples();
   const app = document.getElementById('app');
   app.replaceChildren();
-  const tela = { inicio: telaInicio, lanc: telaLancamentos, compras: telaCompras, carro: telaCarro, conf: telaConferencia }[st.aba];
+  const tela = { inicio: telaInicio, lanc: telaLancamentos, compras: telaCompras, carro: telaCarro, conf: telaConferencia, analise: telaAnalise }[st.aba];
   const wrap = h('div', { class: 'app' });
   app.append(wrap);
   Promise.resolve(tela(wrap)).catch((e) => wrap.append(h('div', { class: 'corpo' }, h('div', { class: 'card erro' }, 'Erro: ' + erroMsg(e)))));
@@ -199,17 +199,18 @@ const ICONES = {
   carro: 'M5 16l1.5-5A2 2 0 0 1 8.4 9.5h7.2a2 2 0 0 1 1.9 1.5L19 16M4 16h16v3h-2M4 16v3h2M7.5 16.5h.01M16.5 16.5h.01',
   compras: 'M3 4h2l2.4 11.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.8L20 8H6.2M9 20h.01M17 20h.01',
   conf: 'M9 12l2 2 4-4M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z',
+  analise: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
 };
 function navegacao() {
   const nav = h('nav', { class: 'tabs', 'aria-label': 'Telas' });
-  for (const [id, rot] of [['inicio', 'Início'], ['lanc', 'Lançamentos'], ['compras', 'Compras'], ['carro', 'Carro'], ['conf', 'Conferência']]) {
+  for (const [id, rot] of [['inicio', 'Início'], ['lanc', 'Lançamentos'], ['compras', 'Compras'], ['carro', 'Carro'], ['analise', 'Análise']]) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
     svg.setAttribute('stroke-width', '1.8'); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
     svg.setAttribute('aria-hidden', 'true');
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', ICONES[id]); svg.append(p);
     nav.append(h('button', { class: st.aba === id ? 'on' : '', 'aria-current': st.aba === id ? 'page' : null,
-      onclick: () => { st.aba = id; render(); window.scrollTo(0, 0); } }, svg, rot));
+      onclick: () => { st.aba = id; st.filtroCat = null; st.analiseCat = null; render(); window.scrollTo(0, 0); } }, svg, rot));
   }
   return nav;
 }
@@ -359,6 +360,7 @@ async function telaInicio(wrap) {
   }
   cardF.append(h('div', { class: 'nota' }, 'Cartão: valor em aberto informado pelo banco. Atualiza 2x por dia.'));
   corpo.append(cardF);
+  corpo.append(h('button', { class: 'btn sec', onclick: () => { st.aba = 'conf'; render(); window.scrollTo(0, 0); } }, 'Conferência e bancos'));
   corpo.append(h('div', { class: 'rodape' }, vInst ? `Versão do app ${Math.floor(vInst / 10)}.${vInst % 10} · telas ${VERSAO_TELAS}` : `Telas ${VERSAO_TELAS}`));
 }
 
@@ -386,6 +388,11 @@ function telaLancamentos(wrap) {
   let lista = st.lancs.filter((l) => (st.verTransf ? true : ['Gasto', 'Receita', 'Investimento'].includes(l.conta_como)));
   if (st.pessoa !== 'todos') lista = lista.filter((l) => l.pessoa_id === st.pessoa || partesDe(l).some((p) => p.pessoa_id === st.pessoa));
   if (st.soPendentes) lista = lista.filter(pendente);
+  if (st.filtroCat) {
+    lista = lista.filter((l) => l.conta_como === 'Gasto' && (l.categoria_id === st.filtroCat || partesDe(l).some((p) => p.categoria_id === st.filtroCat)));
+    corpo.append(h('div', { class: 'card', style: 'flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--verde-claro)' },
+      h('span', {}, 'Só: ', h('b', {}, nomeCat(st.filtroCat))), h('button', { class: 'btn sec', style: 'min-height:40px', onclick: () => { st.filtroCat = null; render(); } }, 'Ver todos')));
+  }
   if (!lista.length) { corpo.append(h('div', { class: 'vazio' }, st.soPendentes ? 'Nada para categorizar. 👍' : 'Nenhum lançamento.')); return; }
 
   let diaAtual = '';
@@ -824,6 +831,216 @@ function abrirPrevistoCompromisso(l) {
       } }, 'Editar compromisso')));
 }
 
+// ----- Análise: como estou indo, mês a mês, o que subiu/desceu, planilha -----
+const Rmil = (v) => (Math.abs(v) >= 1000
+  ? `R$ ${(v / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} mil`
+  : `R$ ${Math.round(v).toLocaleString('pt-BR')}`);
+const R0 = (v) => `R$ ${Math.round(v).toLocaleString('pt-BR')}`;
+const chaveMes = (d) => `${d.getFullYear()}-${d.getMonth()}`;
+
+async function dadosAnalise() {
+  const de = addMes(st.mes, -5), ate = addMes(st.mes, 1);
+  const k = `${de.toISOString()}|${st.lancs.length}`;
+  if (st.analiseDados && st.analiseDados.k === k) return st.analiseDados;
+  const { data, error } = await sb.from('lancamentos')
+    .select('id, data_hora, valor, conta_como, categoria_id, pessoa_id, previsto, descricao, partes(categoria_id, pessoa_id, valor)')
+    .gte('data_hora', de.toISOString()).lt('data_hora', ate.toISOString());
+  if (error) throw error;
+  const { data: prim } = await sb.from('lancamentos').select('data_hora').eq('previsto', false).order('data_hora').limit(1);
+  st.analiseDados = { k, lancs: data, inicio: prim && prim[0] ? new Date(prim[0].data_hora) : null };
+  return st.analiseDados;
+}
+/** Porções de gasto (respeita divisões) com data, categoria e pessoa. */
+function porcoesAnalise(lancs, comPrevisto) {
+  const out = [];
+  for (const l of lancs) {
+    if (l.conta_como !== 'Gasto' || (l.previsto && !comPrevisto)) continue;
+    const d = new Date(l.data_hora);
+    const ps = l.partes || [];
+    if (ps.length) for (const p of ps) out.push({ d, l, valor: Number(p.valor), cat: p.categoria_id, pessoa: p.pessoa_id || l.pessoa_id });
+    else out.push({ d, l, valor: Number(l.valor), cat: l.categoria_id, pessoa: l.pessoa_id });
+  }
+  return out;
+}
+
+async function telaAnalise(wrap) {
+  const { lancs, inicio } = await dadosAnalise();
+  if (st.analiseCat) return telaAnaliseCategoria(wrap, lancs, inicio);
+  const hoje = new Date();
+  const mesAtual = st.mes.getFullYear() === hoje.getFullYear() && st.mes.getMonth() === hoje.getMonth();
+  const diaCorte = mesAtual ? hoje.getDate() : 31;
+  wrap.append(h('div', { class: 'cab' }, h('h1', {}, 'Análise'), seletorMes(render),
+    h('span', { class: 'sub' }, mesAtual ? `Até hoje, dia ${hoje.getDate()}` : 'Mês fechado')));
+  const corpo = h('div', { class: 'corpo' });
+  wrap.append(corpo);
+
+  const reais = porcoesAnalise(lancs, false);
+  const doMes = (arr, m) => arr.filter((x) => chaveMes(x.d) === chaveMes(m));
+  const somaV = (arr) => arr.reduce((s, x) => s + x.valor, 0);
+  const entradasMes = (m) => lancs.filter((l) => l.conta_como === 'Receita' && !l.previsto && chaveMes(new Date(l.data_hora)) === chaveMes(m))
+    .reduce((s, l) => s + Number(l.valor), 0);
+
+  // 1) Como estou indo
+  const entrou = entradasMes(st.mes);
+  const saiu = somaV(doMes(reais, st.mes));
+  const prev = lancs.filter((l) => l.previsto && l.conta_como === 'Gasto' && chaveMes(new Date(l.data_hora)) === chaveMes(st.mes))
+    .reduce((s, l) => s + Number(l.valor), 0);
+  const fim = entrou - saiu - prev;
+  const nivel = fim < 0 ? 'ver' : fim < entrou * 0.1 ? 'ama' : 'verde';
+  const frase = { ver: mesAtual ? 'Atenção: no ritmo atual, o mês fecha no vermelho' : 'O mês fechou no vermelho',
+    ama: mesAtual ? 'No limite: o mês deve fechar quase sem sobra' : 'O mês fechou quase sem sobra',
+    verde: mesAtual ? 'Tudo bem: o mês deve fechar com sobra' : 'O mês fechou com sobra' }[nivel];
+  const cor = { ver: 'var(--erro)', ama: 'var(--laranja)', verde: 'var(--receita)' }[nivel];
+  const tot = Math.max(entrou, saiu + prev, 1);
+  corpo.append(h('div', { class: 'card semaforo ' + nivel },
+    h('div', { style: 'display:flex;align-items:center;gap:10px' }, h('span', { class: 'luz', style: `background:${cor}` }), h('b', { style: 'font-size:16px' }, frase)),
+    h('div', { class: 'lin' }, h('span', {}, 'Entrou'), h('b', { style: 'color:var(--receita)' }, Rmil(entrou))),
+    h('div', { class: 'lin' }, h('span', {}, 'Já saiu'), h('b', {}, Rmil(saiu))),
+    prev ? h('div', { class: 'lin' }, h('span', {}, 'Ainda vai cair (parcelas e compromissos)'), h('b', {}, Rmil(prev))) : null,
+    h('div', { class: 'lin total' }, h('b', {}, mesAtual ? 'Previsão do fim do mês' : 'Resultado do mês'), h('b', { style: `color:${fim < 0 ? 'var(--erro)' : 'var(--receita)'}` }, (fim < 0 ? '− ' : '+ ') + Rmil(Math.abs(fim)))),
+    h('div', { class: 'barra-sem', role: 'img', 'aria-label': `Gasto ${Rmil(saiu)}, previsto ${Rmil(prev)}, entradas ${Rmil(entrou)}` },
+      h('div', { style: `width:${(Math.min(saiu, tot) / tot) * 100}%;background:var(--verde)` }),
+      h('div', { class: 'listra', style: `width:${(Math.min(prev, Math.max(tot - saiu, 0)) / tot) * 100}%` }),
+      fim < 0 ? h('div', { style: `width:${(Math.min(-fim, tot) / tot) * 100}%;background:var(--erro)` }) : null),
+    h('div', { class: 'nota' }, 'Azul: já gasto · listrado: previsto · vermelho: o que passa do que entrou. Entradas: só o que o app marca como entrada; transferências entre suas contas não contam.')));
+
+  // 2) Mês a mês
+  const meses = [];
+  for (let i = 5; i >= 0; i--) { const m = addMes(st.mes, -i); if (!inicio || addMes(m, 1) > inicio) meses.push(m); }
+  const serie = meses.map((m) => ({ m, g: somaV(doMes(reais, m)), e: entradasMes(m),
+    p: chaveMes(m) === chaveMes(st.mes) ? prev : 0 }));
+  const maxV = Math.max(1, ...serie.map((x) => Math.max(x.g + x.p, x.e)));
+  const graf = h('div', { class: 'graf' });
+  for (const x of serie) {
+    graf.append(h('button', { class: 'gcol', onclick: async () => { st.mes = x.m; await carregarMes(); render(); },
+      'aria-label': `${nomeMes(x.m)}: gasto ${Rmil(x.g)}, entrada ${Rmil(x.e)}` },
+      h('div', { class: 'gbarras' },
+        h('div', { class: 'gpilha' },
+          x.p ? h('div', { class: 'listra', style: `height:${(x.p / maxV) * 140}px;border-radius:4px 4px 0 0` }) : null,
+          h('div', { style: `height:${(x.g / maxV) * 140}px;background:var(--verde);border-radius:${x.p ? 0 : '4px 4px 0 0'}` })),
+        h('div', { style: `height:${(x.e / maxV) * 140}px;background:var(--receita);border-radius:4px 4px 0 0;width:18px` })),
+      h('b', { style: chaveMes(x.m) === chaveMes(st.mes) ? 'color:var(--verde)' : '' }, x.m.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')),
+      h('span', {}, Rmil(x.g)), h('span', { style: 'color:var(--receita)' }, Rmil(x.e))));
+  }
+  corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Gastos e entradas por mês'), graf,
+    h('div', { class: 'nota' }, h('span', { class: 'leg', style: 'background:var(--verde)' }), ' Gasto  ', h('span', { class: 'leg', style: 'background:var(--receita)' }), ' Entrada',
+      inicio ? ` · os dados começam em ${inicio.toLocaleDateString('pt-BR')}` : '', '. Toque num mês para abrir.')));
+
+  // 3) O que subiu / desceu (até o mesmo dia)
+  const ant = addMes(st.mes, -1);
+  const corte = (arr) => arr.filter((x) => x.d.getDate() <= diaCorte);
+  const agrupa = (arr, campo) => { const o = {}; for (const x of arr) { const c = x[campo] || 0; o[c] = (o[c] || 0) + x.valor; } return o; };
+  const comparar = (campo, nomeDe, abrir) => {
+    const a = agrupa(corte(doMes(reais, st.mes)), campo), b = agrupa(corte(doMes(reais, ant)), campo);
+    const difs = [...new Set([...Object.keys(a), ...Object.keys(b)])].map((k) => ({ k, agora: a[k] || 0, antes: b[k] || 0, d: (a[k] || 0) - (b[k] || 0) }))
+      .filter((x) => Math.abs(x.d) >= 1);
+    const sub = difs.filter((x) => x.d > 0).sort((x, y) => y.d - x.d), des = difs.filter((x) => x.d < 0).sort((x, y) => x.d - y.d);
+    const linha = (x) => h('button', { class: 'catlin', onclick: abrir ? () => abrir(x.k) : null },
+      campo === 'cat' ? (x.k === '0' ? icoPend(36) : bolinha(icoDe(nomeCat(Number(x.k))), 36)) : null,
+      h('div', { class: 'catcorpo', style: 'gap:2px' }, h('b', {}, nomeDe(x.k)), h('span', { class: 'd' }, `${R0(x.antes)} → ${R0(x.agora)}`)),
+      h('b', { style: `color:${x.d > 0 ? 'var(--erro)' : 'var(--receita)'};white-space:nowrap` }, (x.d > 0 ? '+ ' : '− ') + R0(Math.abs(x.d))));
+    return { sub, des, linha };
+  };
+  const nomeAnt = ant.toLocaleDateString('pt-BR', { month: 'long' });
+  const cc = comparar('cat', (k) => (k === '0' ? 'A categorizar' : nomeCat(Number(k))), (k) => { if (k !== '0') { st.analiseCat = Number(k); render(); window.scrollTo(0, 0); } });
+  const cardC = h('div', { class: 'card' }, h('h2', {}, `O que mudou em relação a ${nomeAnt}`),
+    h('div', { class: 'nota', style: 'margin-top:-6px' }, mesAtual ? `Comparando até o mesmo dia (1 a ${diaCorte}). Toque para ver o gráfico da categoria.` : 'Mês inteiro contra mês inteiro. Toque para ver o gráfico da categoria.'));
+  if (!cc.sub.length && !cc.des.length) cardC.append(h('div', { class: 'vazio' }, 'Sem dados do mês anterior para comparar.'));
+  if (cc.sub.length) cardC.append(h('span', { class: 'rot-sub' }, 'SUBIU'), ...cc.sub.slice(0, 5).map(cc.linha));
+  if (cc.des.length) cardC.append(h('span', { class: 'rot-des' }, 'DESCEU'), ...cc.des.slice(0, 5).map(cc.linha));
+  corpo.append(cardC);
+
+  // 4) Por pessoa
+  const cp = comparar('pessoa', (k) => nomePessoa(k));
+  const pessoas = [...cp.sub, ...cp.des].sort((a, b) => b.agora - a.agora);
+  if (pessoas.length) corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Por pessoa'),
+    h('div', { class: 'nota', style: 'margin-top:-6px' }, `Mesmo comparativo com ${nomeAnt}, separado por quem gastou.`), pessoas.map(cp.linha)));
+
+  // 5) Planilha
+  const btnPl = h('button', { class: 'btn sec', onclick: () => baixarPlanilha(btnPl) }, 'Baixar planilha (Excel)');
+  corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Planilha'), btnPl,
+    h('div', { class: 'nota' }, 'Todos os lançamentos (desde o início) com data, data da compra, categoria, pessoa, banco, valor, observação e partes da divisão. Para analisar no computador.')));
+}
+
+function telaAnaliseCategoria(wrap, lancs, inicio) {
+  const cat = st.analiseCat;
+  const reais = porcoesAnalise(lancs, false).filter((x) => x.cat === cat);
+  const meses = [];
+  for (let i = 5; i >= 0; i--) { const m = addMes(st.mes, -i); if (!inicio || addMes(m, 1) > inicio) meses.push(m); }
+  const serie = meses.map((m) => ({ m, v: reais.filter((x) => chaveMes(x.d) === chaveMes(m)).reduce((s, x) => s + x.valor, 0) }));
+  const comDado = serie.filter((x) => x.v > 0);
+  const media = comDado.length ? comDado.reduce((s, x) => s + x.v, 0) / comDado.length : 0;
+  const atual = serie[serie.length - 1].v;
+  const maxV = Math.max(1, ...serie.map((x) => x.v), media);
+  wrap.append(h('div', { class: 'cab' },
+    h('button', { class: 'voltar', onclick: () => { st.analiseCat = null; render(); } }, '‹ Análise'),
+    h('h1', {}, nomeCat(cat)),
+    h('span', { class: 'sub' }, `Média por mês: ${R0(media)} · ${nomeMes(st.mes)}: ${R0(atual)}`)));
+  const corpo = h('div', { class: 'corpo' });
+  wrap.append(corpo);
+  const graf = h('div', { class: 'graf', style: 'position:relative' },
+    media ? h('div', { class: 'gmedia', style: `bottom:${(media / maxV) * 140 + 40}px` }) : null);
+  for (const x of serie) graf.append(h('div', { class: 'gcol' },
+    h('div', { class: 'gbarras' }, h('div', { style: `height:${(x.v / maxV) * 140}px;background:${icoDe(nomeCat(cat))[1]};border-radius:6px 6px 0 0;width:32px` })),
+    h('b', {}, x.m.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')), h('span', {}, R0(x.v))));
+  corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Mês a mês'), graf,
+    h('div', { class: 'nota' }, 'Linha laranja: média dos meses com gasto.', inicio ? ` Os dados começam em ${inicio.toLocaleDateString('pt-BR')}.` : '')));
+  const doMes = reais.filter((x) => chaveMes(x.d) === chaveMes(st.mes)).sort((a, b) => b.valor - a.valor);
+  const info = h('div', { class: 'card' }, h('h2', {}, `Em ${nomeMes(st.mes).toLowerCase()}`),
+    h('div', { class: 'lin' }, h('span', {}, 'Total'), h('b', {}, R(atual))),
+    h('div', { class: 'lin' }, h('span', {}, 'Lançamentos'), h('b', {}, String(new Set(doMes.map((x) => x.l.id)).size))),
+    doMes[0] ? h('div', { class: 'lin' }, h('span', {}, `Maior: ${doMes[0].l.descricao || ''} (${dataCurta(doMes[0].l.data_hora)})`), h('b', {}, R(doMes[0].valor))) : null,
+    media ? h('div', { class: 'lin' }, h('span', {}, 'Contra a média'), h('b', { style: `color:${atual > media ? 'var(--erro)' : 'var(--receita)'}` },
+      `${atual > media ? '+' : '−'} ${Math.round(Math.abs(atual / media - 1) * 100)}%`)) : null,
+    h('button', { class: 'btn sec', onclick: () => { st.filtroCat = cat; st.aba = 'lanc'; st.pessoa = 'todos'; st.soPendentes = false; render(); window.scrollTo(0, 0); } },
+      `Ver os lançamentos de ${nomeCat(cat)}`));
+  corpo.append(info);
+}
+
+async function baixarPlanilha(btn) {
+  btn.disabled = true; btn.textContent = 'Gerando planilha…';
+  try {
+    if (!window.XLSX) await new Promise((ok, erro) => { const sc = document.createElement('script'); sc.src = 'vendor/xlsx-0.18.5.min.js'; sc.onload = ok; sc.onerror = () => erro(new Error('não carregou o gerador')); document.head.append(sc); });
+    const todos = [];
+    for (let de = 0; ; de += 1000) {
+      const { data, error } = await sb.from('lancamentos').select('*, partes(*)').eq('previsto', false).order('data_hora').range(de, de + 999);
+      if (error) throw error;
+      todos.push(...data); if (data.length < 1000) break;
+    }
+    const dt = (s) => (s ? new Date(s) : null);
+    const linhas = todos.map((l) => ({
+      Data: dt(l.data_hora), 'Data da compra': dt(l.data_compra), Descrição: l.descricao || l.tipo, 'Entra como': l.conta_como,
+      Categoria: l.conta_como === 'Gasto' ? nomeCat(l.categoria_id) : '', Quem: nomePessoa(l.pessoa_id), Banco: l.banco || '',
+      Cartão: l.final_cartao || '', Tipo: l.tipo || '', Parcela: l.total_parcelas > 1 ? `${l.parcela}/${l.total_parcelas}` : '',
+      Valor: Number(l.valor), Observação: l.observacao || '', Origem: l.conferido ? (l.aviso_id ? 'aviso + banco' : 'banco') : 'só aviso',
+    }));
+    const partes = [];
+    for (const l of todos) for (const p of l.partes || []) partes.push({ Data: dt(l.data_hora), Descrição: l.descricao || l.tipo,
+      Categoria: nomeCat(p.categoria_id || l.categoria_id), Quem: nomePessoa(p.pessoa_id || l.pessoa_id) + (p.nome_outro ? ` (${p.nome_outro})` : ''),
+      Valor: Number(p.valor), Observação: p.observacao || '' });
+    const wb = XLSX.utils.book_new();
+    const aba = (rows, nome, larg) => { const ws = XLSX.utils.json_to_sheet(rows, { cellDates: true, dateNF: 'dd/mm/yyyy' }); ws['!cols'] = larg.map((w) => ({ wch: w })); ws['!autofilter'] = { ref: ws['!ref'] }; XLSX.utils.book_append_sheet(wb, ws, nome); };
+    aba(linhas, 'Lançamentos', [11, 13, 34, 12, 24, 14, 8, 7, 18, 8, 12, 30, 13]);
+    aba(partes, 'Partes das divisões', [11, 34, 24, 20, 12, 30]);
+    const bin = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellDates: true });
+    const nome = `gastos-${new Date().toLocaleDateString('sv-SE')}.xlsx`;
+    const blob = new Blob([bin], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    if (window.GastosAndroid) {
+      // Dentro do app Android: guarda numa pasta privada e abre um link temporário no navegador para baixar
+      const caminho = `${st.eu}/${Date.now()}-${nome}`;
+      const up = await sb.storage.from('planilhas').upload(caminho, blob, { contentType: blob.type });
+      if (up.error) throw up.error;
+      const lk = await sb.storage.from('planilhas').createSignedUrl(caminho, 600, { download: nome });
+      if (lk.error) throw lk.error;
+      location.href = lk.data.signedUrl;
+    } else {
+      const a = h('a', { href: URL.createObjectURL(blob), download: nome }); document.body.append(a); a.click(); a.remove();
+    }
+    toast('Planilha pronta.');
+  } catch (e) { toast('Não gerou a planilha: ' + erroMsg(e), 5000); }
+  btn.disabled = false; btn.textContent = 'Baixar planilha (Excel)';
+}
+
 // ----- Carro -----
 async function telaCarro(wrap) {
   wrap.append(h('div', { class: 'cab' }, h('h1', {}, 'Carro'), h('span', { class: 'sub' }, 'Combustível, pedágio, lavagem e manutenção')));
@@ -1210,6 +1427,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharShee
 // Botão "voltar" do Android: fecha a janela aberta ou volta para o Início
 window.voltarApp = () => {
   if (!document.getElementById('sheet').hidden) { fecharSheet(); return true; }
+  if (st.cad && st.aba === 'analise' && st.analiseCat) { st.analiseCat = null; render(); return true; }
   if (st.cad && st.aba !== 'inicio') { st.aba = 'inicio'; render(); return true; }
   return false;
 };

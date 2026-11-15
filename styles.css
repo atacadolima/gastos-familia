@@ -138,3 +138,22 @@ nav.tabs button.on svg { background: var(--verde-claro); border-radius: 999px; w
 .item.atrasado { background: var(--ambar-fundo); border: 1.5px dashed var(--laranja); }
 .item.atrasado .n, .item.atrasado .v { color: var(--texto); }
 .rodape { text-align: center; font-size: 12px; color: var(--suave); padding: 4px 0 12px; }
+.semaforo { gap: 8px; }
+.semaforo.ver { background: #FDECEA; box-shadow: none; border: 1.5px solid var(--erro); }
+.semaforo.ama { background: var(--ambar-fundo); box-shadow: none; border: 1.5px solid var(--laranja); }
+.semaforo.verde { background: #E6F4EA; box-shadow: none; border: 1.5px solid var(--receita); }
+.semaforo .luz { width: 14px; height: 14px; border-radius: 999px; flex: none; }
+.barra-sem { height: 12px; border-radius: 6px; background: #fff; display: flex; overflow: hidden; }
+.listra { background: repeating-linear-gradient(45deg, rgba(27,63,191,.35) 0 4px, rgba(27,63,191,.12) 4px 8px); }
+.graf { display: flex; justify-content: space-around; align-items: flex-end; gap: 4px; padding-top: 8px; }
+.gcol { display: flex; flex-direction: column; align-items: center; gap: 2px; border: none; background: none; padding: 0; font-size: 11px; min-width: 0; flex: 1; }
+.gcol b { margin-top: 4px; font-size: 12px; text-transform: capitalize; }
+.gcol span { white-space: nowrap; }
+.gbarras { display: flex; align-items: flex-end; gap: 3px; height: 140px; border-bottom: 1px solid var(--linha); }
+.gpilha { display: flex; flex-direction: column; justify-content: flex-end; width: 18px; }
+.gmedia { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--laranja); pointer-events: none; }
+.leg { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; }
+.rot-sub { font-size: 12px; font-weight: 800; color: var(--erro); margin-top: 4px; }
+.rot-des { font-size: 12px; font-weight: 800; color: var(--receita); margin-top: 6px; }
+.cab .voltar { align-self: flex-start; border: none; background: none; color: #fff; font-weight: 700; padding: 0; min-height: 32px; opacity: .9; }
+.semaforo .lin b { white-space: nowrap; }
