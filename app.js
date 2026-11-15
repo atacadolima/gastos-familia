@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v25';
+const VERSAO_TELAS = 'v26';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -384,7 +384,7 @@ async function telaInicio(wrap) {
   corpo.append(cardI);
 
   // Cartões e contas
-  const { data: contas } = await sb.from('contas_banco').select('*').order('banco');
+  const { data: contas } = await sb.from('contas_banco').select('*').eq('ignorar', false).order('banco');
   const cardF = h('div', { class: 'card' }, h('h2', {}, 'Cartões e contas'));
   if (!contas || !contas.length) cardF.append(h('div', { class: 'nota' }, 'Aguardando a primeira leitura dos bancos.'));
   for (const c of contas || []) {

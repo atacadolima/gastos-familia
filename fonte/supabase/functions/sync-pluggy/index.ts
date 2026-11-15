@@ -102,7 +102,11 @@ Deno.serve(async (req) => {
           investimentosLidos++;
         }
       } catch (e) { resumo[`investimentos_${item.banco}`] = 'não compartilhado'; }
+      // Contas que a família pediu para não acompanhar (ex.: compartilhada por engano no Open Finance)
+      const { data: ign } = await db.from('contas_banco').select('id').eq('ignorar', true);
+      const ignoradas = new Set((ign || []).map((x: any) => x.id));
       for (const c of contas) {
+        if (ignoradas.has(c.id)) continue;
         const cd = c.creditData || {};
         await db.from('contas_banco').upsert({
           id: c.id, item_id: item.id, banco: item.banco, tipo: c.type, subtipo: c.subtype, nome: c.name,
