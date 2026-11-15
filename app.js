@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v23';
+const VERSAO_TELAS = 'v24';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -253,7 +253,7 @@ async function telaInicio(wrap) {
   const corpo = h('div', { class: 'corpo' });
   wrap.append(corpo);
   // App do Android desatualizado: oferece atualizar (o número sobe a cada APK publicado)
-  const APK_ATUAL = 7;
+  const APK_ATUAL = 8;
   let vInst = 0;
   try { vInst = window.GastosAndroid && window.GastosAndroid.versao ? Number(window.GastosAndroid.versao()) : 0; } catch {}
   if (vInst && vInst < APK_ATUAL) {

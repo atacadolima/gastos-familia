@@ -46,6 +46,7 @@ export function banco(pacote, titulo) {
   if (p.includes('itau') || p.includes('itaucard')) return 'Itaú';
   if (p.startsWith('br.com.bb') || p.includes('.bb.') || p.includes('bancodobrasil') || p.includes('ourocard')) return 'BB';
   if (p.includes('caixa')) return 'Caixa';
+  if (p.includes('sicoob')) return 'Sicoob';
   return '';
 }
 

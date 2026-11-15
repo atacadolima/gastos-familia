@@ -101,6 +101,7 @@ public final class Parser {
         if (p.contains("itau") || p.contains("itaucard")) return "Itaú";
         if (p.startsWith("br.com.bb") || p.contains(".bb.") || p.contains("bancodobrasil") || p.contains("ourocard")) return "BB";
         if (p.contains("caixa")) return "Caixa";
+        if (p.contains("sicoob")) return "Sicoob";
         return "";
     }
 
