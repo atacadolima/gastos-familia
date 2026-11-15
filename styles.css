@@ -161,3 +161,7 @@ nav.tabs button.on svg { background: var(--verde-claro); border-radius: 999px; w
 .marca { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 16px; }
 .marca img { width: 24px; height: 24px; border-radius: 7px; }
 .login .lema { margin: -8px 0 6px; color: var(--suave); font-size: 15px; font-weight: 600; }
+.card.fin-mini { border: none; text-align: left; width: 100%; gap: 8px; }
+.ano-fin { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid var(--linha); }
+.ano-fin:last-of-type { border-bottom: none; }
+.sim-res { display: flex; flex-direction: column; gap: 6px; }

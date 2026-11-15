@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v24';
+const VERSAO_TELAS = 'v25';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -88,8 +88,39 @@ async function carregarCadastros() {
     sb.from('cartoes').select('*'),
   ]);
   for (const x of [p, c, k]) if (x.error) throw x.error;
-  st.cad = { pessoas: p.data, categorias: c.data, cartoes: k.data, caixinhas: [] };
+  st.cad = { pessoas: p.data, categorias: c.data, cartoes: k.data, caixinhas: [], fins: [] };
   await carregarCaixinhas();
+  await carregarFinanciamentos();
+}
+/** Financiamentos e o andamento: posição de referência + parcelas pagas depois dela (compromisso ligado). */
+async function carregarFinanciamentos() {
+  const r = await sb.from('financiamentos').select('*, financiamento_anos(*)').eq('ativo', true).order('id');
+  if (r.error) { st.cad.fins = []; return; }
+  const fins = r.data;
+  for (const f of fins) {
+    let pagos = [];
+    if (f.compromisso_id) {
+      const q = await sb.from('lancamentos').select('data_hora, valor').eq('compromisso_id', f.compromisso_id).eq('previsto', false)
+        .gt('data_hora', new Date(f.saldo_em + 'T23:59:59-03:00').toISOString()).order('data_hora');
+      if (!q.error) pagos = q.data;
+    }
+    const am = Number(f.amortizacao_mes) || 0, i = (Number(f.taxa_anual) || 0) / 1200;
+    f.pagos = pagos;
+    f.pagas = f.parcelas_pagas + pagos.length;
+    f.saldo = Math.max(0, Number(f.saldo_devedor) - am * pagos.length);
+    f.faltam = Math.max(0, f.parcelas_total - f.pagas);
+    f.prox = { amort: Math.min(am, f.saldo), juros: f.saldo * i, outros: (Number(f.seguro_mes) || 0) + (Number(f.taxa_adm_mes) || 0) };
+    f.prox.total = f.prox.amort + f.prox.juros + f.prox.outros;
+    f.ultima = addMes(new Date(new Date(f.saldo_em + 'T12:00:00').getFullYear(), new Date(f.saldo_em + 'T12:00:00').getMonth(), 1), f.parcelas_total - f.parcelas_pagas);
+    f.original = am * f.parcelas_total;
+  }
+  st.cad.fins = fins;
+}
+/** Juros que ainda faltam pagar (SAC, amortização fixa); com amortização extra, o prazo encurta. */
+function jurosRestantes(saldo, am, i) {
+  let j = 0, n = 0;
+  while (saldo > 0.01 && n < 1000) { j += saldo * i; saldo -= Math.min(am, saldo); n++; }
+  return { juros: j, meses: n };
 }
 
 async function carregarMes() {
@@ -210,7 +241,7 @@ function navegacao() {
     svg.setAttribute('aria-hidden', 'true');
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', ICONES[id]); svg.append(p);
     nav.append(h('button', { class: st.aba === id ? 'on' : '', 'aria-current': st.aba === id ? 'page' : null,
-      onclick: () => { st.aba = id; st.filtroCat = null; st.analiseCat = null; render(); window.scrollTo(0, 0); } }, svg, rot));
+      onclick: () => { st.aba = id; st.filtroCat = null; st.analiseCat = null; st.analiseFin = null; render(); window.scrollTo(0, 0); } }, svg, rot));
   }
   return nav;
 }
@@ -325,6 +356,15 @@ async function telaInicio(wrap) {
     }
     cardJ.append(h('div', { class: 'nota' }, 'Parcelas que ainda vão cair e assinaturas que se repetem todo mês.'));
     corpo.append(cardJ);
+  }
+
+  // Financiamentos: uma linha simples (detalhe na Análise)
+  for (const f of st.cad.fins || []) {
+    const pct = Math.round((f.pagas / f.parcelas_total) * 100);
+    corpo.append(h('button', { class: 'card fin-mini', onclick: () => { st.aba = 'analise'; st.analiseFin = f.id; render(); window.scrollTo(0, 0); } },
+      h('div', { class: 'lin' }, h('h2', {}, f.nome), h('span', { class: 'v' }, `${Rmil(f.saldo)}`)),
+      h('div', { class: 'barra fina' }, h('div', { style: `width:${pct}%;background:var(--verde)` })),
+      h('div', { class: 'nota' }, `${f.pagas} de ${f.parcelas_total} parcelas · faltam ${f.faltam} · toque para ver o detalhe`)));
   }
 
   // Investimentos (caixinhas)
@@ -866,6 +906,7 @@ function porcoesAnalise(lancs, comPrevisto) {
 
 async function telaAnalise(wrap) {
   const { lancs, inicio } = await dadosAnalise();
+  if (st.analiseFin) return telaFinanciamento(wrap);
   if (st.analiseCat) return telaAnaliseCategoria(wrap, lancs, inicio);
   const hoje = new Date();
   const mesAtual = st.mes.getFullYear() === hoje.getFullYear() && st.mes.getMonth() === hoje.getMonth();
@@ -957,10 +998,91 @@ async function telaAnalise(wrap) {
   if (pessoas.length) corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Por pessoa'),
     h('div', { class: 'nota', style: 'margin-top:-6px' }, `Mesmo comparativo com ${nomeAnt}, separado por quem gastou.`), pessoas.map(cp.linha)));
 
+  // Financiamentos (só aparece para quem tem)
+  if ((st.cad.fins || []).length) {
+    const cf = h('div', { class: 'card' }, h('h2', {}, 'Financiamentos'));
+    for (const f of st.cad.fins) cf.append(h('button', { class: 'catlin', onclick: () => { st.analiseFin = f.id; render(); window.scrollTo(0, 0); } },
+      bolinha(icoDe('Moradia'), 36),
+      h('div', { class: 'catcorpo', style: 'gap:2px' }, h('b', {}, f.nome), h('span', { class: 'd' }, `${f.pagas} de ${f.parcelas_total} parcelas · saldo ${Rmil(f.saldo)}`)),
+      h('b', { style: 'white-space:nowrap' }, '›')));
+    corpo.append(cf);
+  }
+
   // 5) Planilha
   const btnPl = h('button', { class: 'btn sec', onclick: () => baixarPlanilha(btnPl) }, 'Baixar planilha (Excel)');
   corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Planilha'), btnPl,
     h('div', { class: 'nota' }, 'Todos os lançamentos (desde o início) com data, data da compra, categoria, pessoa, banco, valor, observação e partes da divisão. Para analisar no computador.')));
+}
+
+function telaFinanciamento(wrap) {
+  const f = (st.cad.fins || []).find((x) => x.id === st.analiseFin);
+  if (!f) { st.analiseFin = null; return telaAnalise(wrap); }
+  const am = Number(f.amortizacao_mes) || 0, i = (Number(f.taxa_anual) || 0) / 1200;
+  const pctPrazo = Math.round((f.pagas / f.parcelas_total) * 100);
+  const pctDivida = f.original ? Math.round((1 - f.saldo / f.original) * 100) : null;
+  wrap.append(h('div', { class: 'cab' },
+    h('button', { class: 'voltar', onclick: () => { st.analiseFin = null; render(); } }, '‹ Análise'),
+    h('h1', {}, f.nome),
+    h('span', { class: 'sub' }, [f.banco, f.contrato ? `contrato ${f.contrato}` : null, f.sistema, f.taxa_anual ? `${String(f.taxa_anual).replace('.', ',')}% ao ano` : null].filter(Boolean).join(' · '))));
+  const corpo = h('div', { class: 'corpo' });
+  wrap.append(corpo);
+
+  // Andamento
+  corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Andamento'),
+    h('div', { class: 'lin' }, h('span', {}, 'Saldo devedor'), h('b', { style: 'font-size:18px' }, Rmil(f.saldo))),
+    h('div', { class: 'barra' }, h('div', { style: `width:${pctPrazo}%;background:var(--verde)` })),
+    h('div', { class: 'lin' }, h('span', {}, `${f.pagas} de ${f.parcelas_total} parcelas pagas`), h('b', {}, `${pctPrazo}% do prazo`)),
+    h('div', { class: 'lin' }, h('span', {}, 'Faltam'), h('b', {}, `${f.faltam} parcelas · até ${nomeMes(f.ultima).toLowerCase()}`)),
+    pctDivida != null ? h('div', { class: 'lin' }, h('span', {}, 'Da dívida já abatida'), h('b', {}, `${pctDivida}%`)) : null,
+    h('div', { class: 'nota' }, `Posição do banco em ${new Date(f.saldo_em + 'T12:00:00').toLocaleDateString('pt-BR')}` +
+      (f.pagos.length ? `, mais ${f.pagos.length} parcela(s) paga(s) depois, reconhecida(s) pelo app.` : '. O app atualiza sozinho quando cada parcela cai na conta.'))));
+
+  // Próxima parcela: para onde vai o dinheiro
+  const p = f.prox, tot = p.total || 1;
+  corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Para onde vai a próxima parcela'),
+    h('div', { class: 'barra-sem', role: 'img', 'aria-label': `Abate a dívida ${R(p.amort)}, juros ${R(p.juros)}, seguro e taxa ${R(p.outros)}` },
+      h('div', { style: `width:${(p.amort / tot) * 100}%;background:var(--receita)` }),
+      h('div', { style: `width:${(p.juros / tot) * 100}%;background:var(--erro)` }),
+      h('div', { style: `width:${(p.outros / tot) * 100}%;background:#8A8F9B` })),
+    h('div', { class: 'lin' }, h('span', {}, h('span', { class: 'leg', style: 'background:var(--receita)' }), ' Abate a dívida'), h('b', {}, R(p.amort))),
+    h('div', { class: 'lin' }, h('span', {}, h('span', { class: 'leg', style: 'background:var(--erro)' }), ' Juros'), h('b', {}, R(p.juros))),
+    h('div', { class: 'lin' }, h('span', {}, h('span', { class: 'leg', style: 'background:#8A8F9B' }), ' Seguro e taxa'), h('b', {}, R(p.outros))),
+    h('div', { class: 'lin total' }, h('span', {}, 'Parcela'), h('b', {}, R(p.total))),
+    h('div', { class: 'nota' }, `De cada R$ 100 da parcela, R$ ${Math.round((p.amort / tot) * 100)} diminuem a dívida. Valores calculados; o boleto da Caixa é o oficial.`)));
+
+  // Por ano
+  const anos = [...(f.financiamento_anos || [])].sort((a, b) => b.ano - a.ano);
+  if (anos.length) {
+    const ca = h('div', { class: 'card' }, h('h2', {}, 'Por ano'));
+    for (const a of anos) {
+      const extra = f.pagos.filter((x) => new Date(x.data_hora).getFullYear() === a.ano);
+      const totPago = Number(a.total_pago) + extra.reduce((s, x) => s + Number(x.valor), 0);
+      ca.append(h('div', { class: 'ano-fin' },
+        h('div', { class: 'lin' }, h('b', {}, String(a.ano) + (a.ate_mes && a.ate_mes < 12 && !extra.length ? ` (até ${['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][a.ate_mes - 1]})` : '')), h('b', {}, `${Rmil(totPago)} pagos`)),
+        h('div', { class: 'd' }, `Juros ${Rmil(Number(a.juros))} · abateu ${Rmil(Number(a.amortizacao))} · seguro e taxas ${Rmil(Number(a.seguros) + Number(a.taxas))}` +
+          (a.saldo_fim ? ` · saldo ${Rmil(Number(a.saldo_fim))}` : '') + (a.estimado ? ' · estimado' : ''))));
+    }
+    ca.append(h('div', { class: 'nota' }, 'O ano fechado vem do extrato de Imposto de Renda da Caixa (útil na declaração).'));
+    corpo.append(ca);
+  }
+
+  // Simulação de amortização extra
+  const base = jurosRestantes(f.saldo, am, i);
+  const valor = h('input', { type: 'number', inputmode: 'decimal', step: '100', placeholder: 'ex.: 10000', 'aria-label': 'Valor a amortizar' });
+  const res = h('div', { class: 'sim-res' });
+  const calc = () => {
+    const v = Number(String(valor.value).replace(',', '.')) || 0;
+    if (!(v > 0)) { res.replaceChildren(h('div', { class: 'nota' }, `Sem nada extra: faltam ${base.meses} parcelas e cerca de ${Rmil(base.juros)} de juros.`)); return; }
+    const com = jurosRestantes(Math.max(0, f.saldo - v), am, i);
+    res.replaceChildren(
+      h('div', { class: 'lin' }, h('span', {}, 'Prazo cai'), h('b', { style: 'color:var(--receita)' }, `${base.meses - com.meses} parcelas`)),
+      h('div', { class: 'lin' }, h('span', {}, 'Juros que deixa de pagar'), h('b', { style: 'color:var(--receita)' }, `cerca de ${Rmil(base.juros - com.juros)}`)),
+      h('div', { class: 'nota' }, 'Conta aproximada (mantém a parcela e encurta o prazo). Não é recomendação: confirme as condições com a Caixa antes de decidir.'));
+  };
+  valor.oninput = calc;
+  corpo.append(h('div', { class: 'card' }, h('h2', {}, 'E se eu amortizar um valor extra?'),
+    h('label', { class: 'campo' }, 'Valor extra (R$)', valor), res));
+  calc();
 }
 
 function telaAnaliseCategoria(wrap, lancs, inicio) {
@@ -1429,6 +1551,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharShee
 // Botão "voltar" do Android: fecha a janela aberta ou volta para o Início
 window.voltarApp = () => {
   if (!document.getElementById('sheet').hidden) { fecharSheet(); return true; }
+  if (st.cad && st.aba === 'analise' && st.analiseFin) { st.analiseFin = null; render(); return true; }
   if (st.cad && st.aba === 'analise' && st.analiseCat) { st.analiseCat = null; render(); return true; }
   if (st.cad && st.aba !== 'inicio') { st.aba = 'inicio'; render(); return true; }
   return false;
