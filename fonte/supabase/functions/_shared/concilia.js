@@ -43,6 +43,12 @@ const ENTRE_CONTAS_TXT = /d[ée]bito autom[áa]tico .*(black|cart|fatura|visa|ma
 /** Como uma transação do banco que não casou com nenhum aviso entra nas contas. */
 export function contaComo(t) {
   if (t.contraparte && ehTitular(t.contraparte)) return 'Entre contas';
+  // Pix/TED em que quem paga e quem recebe têm o mesmo CPF: dinheiro passando de uma conta sua para outra
+  const pd = t.bruto && t.bruto.paymentData;
+  const doc = (x) => x && x.documentNumber && String(x.documentNumber.value || '').replace(/\D/g, '');
+  if (pd && doc(pd.payer) && doc(pd.payer) === doc(pd.receiver)) return 'Entre contas';
+  // Cartão: linha que só repete o total da fatura anterior não é compra
+  if (t.conta_tipo === 'CREDIT' && /total da fatura anterior|saldo anterior/i.test(t.descricao || '')) return 'Detalhe';
   if (ENTRE_CONTAS_TXT.test(t.descricao || '') || ENTRE_CONTAS_TXT.test((t.bruto && t.bruto.description) || '')) return 'Entre contas';
   if (t.sentido === 'entrada') return t.conta_tipo === 'CREDIT' ? 'Entre contas' : 'Receita';
   return 'Gasto';

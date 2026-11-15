@@ -56,9 +56,6 @@ Deno.serve(async (req) => {
     if (!auth.ok) throw new Error(`Pluggy /auth: ${auth.status} ${(await auth.text()).slice(0, 200)}`);
     const { apiKey } = await auth.json();
 
-    // Primeira vez: 60 dias para trás; depois, 10 dias (pega lançamentos que o banco demora a postar).
-    const { count } = await db.from('transacoes_banco').select('id', { count: 'exact', head: true });
-    const de = new Date(Date.now() - (count ? 10 : 60) * 86400000);
     const ate = new Date(Date.now() + 86400000);
 
     const { data: itens, error: eItens } = await db.from('pluggy_itens').select('id, banco');
@@ -85,6 +82,9 @@ Deno.serve(async (req) => {
     let novas = 0, casadas = 0, criadas = 0;
 
     for (const item of itens!) {
+      // Banco novo: 90 dias para trás; depois, 10 dias (pega lançamentos que o banco demora a postar).
+      const { count } = await db.from('transacoes_banco').select('id', { count: 'exact', head: true }).eq('banco', item.banco).lt('data', new Date(Date.now() - 12 * 86400000).toISOString());
+      const de = new Date(Date.now() - (count ? 10 : 90) * 86400000);
       const contas = (await pluggy(`/accounts?itemId=${item.id}`, apiKey)).results || [];
       // Investimentos com saldo (poupança, CDB, previdência…), quando o banco compartilha
       try {
