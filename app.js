@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v29';
+const VERSAO_TELAS = 'v30';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -455,39 +455,45 @@ async function buscarLancamentos(corpo) {
   const q = st.busca;
   corpo.replaceChildren(h('div', { class: 'vazio' }, 'Buscando…'));
   const ehValor = /^[\d.,]+$/.test(q) && /\d/.test(q);
+  const per = st.buscaPer || '12m', hoje = new Date();
+  const desde = per === 'tudo' ? null : per === 'ano' ? new Date(hoje.getFullYear(), 0, 1) : addMes(new Date(hoje.getFullYear(), hoje.getMonth(), 1), -11);
+  const noPer = (qb) => (desde ? qb.gte('data_hora', desde.toISOString()) : qb);
   let ids = new Set(), achados = [];
   const sel = '*, partes(*), abastecimentos(*), comprovantes(id)';
   if (ehValor) {
     const v = Number(q.includes(',') ? q.replace(/\./g, '').replace(',', '.') : q);
-    const r = await sb.from('lancamentos').select(sel).gte('valor', v - 0.005).lt('valor', v + 1).order('data_hora', { ascending: false }).limit(100);
+    const r = await noPer(sb.from('lancamentos').select(sel).gte('valor', v - 0.005).lt('valor', v + 1)).order('data_hora', { ascending: false }).limit(100);
     if (!r.error) achados = r.data.filter((l) => Number(l.valor) === v || (!q.includes(',') && !q.includes('.') && Math.floor(Number(l.valor)) === v));
     const rp = await sb.from('partes').select('lancamento_id, valor').gte('valor', v - 0.005).lt('valor', v + 1);
     for (const p of rp.data || []) if (Math.floor(Number(p.valor)) === Math.floor(v)) ids.add(p.lancamento_id);
   } else {
     const t = q.replace(/[,()*%]/g, ' ').trim();
-    const r = await sb.from('lancamentos').select(sel)
-      .or(`descricao.ilike.*${t}*,observacao.ilike.*${t}*,ded_prestador.ilike.*${t}*`).order('data_hora', { ascending: false }).limit(100);
+    const r = await noPer(sb.from('lancamentos').select(sel)
+      .or(`descricao.ilike.*${t}*,observacao.ilike.*${t}*,ded_prestador.ilike.*${t}*`)).order('data_hora', { ascending: false }).limit(100);
     if (!r.error) achados = r.data;
     const rp = await sb.from('partes').select('lancamento_id').or(`observacao.ilike.*${t}*,nome_outro.ilike.*${t}*`).limit(100);
     for (const p of rp.data || []) ids.add(p.lancamento_id);
   }
   for (const l of achados) ids.delete(l.id);
   if (ids.size) {
-    const r2 = await sb.from('lancamentos').select(sel).in('id', [...ids]);
+    const r2 = await noPer(sb.from('lancamentos').select(sel).in('id', [...ids]));
     if (!r2.error) achados = achados.concat(r2.data);
   }
   if (st.busca !== q) return; // o usuário já digitou outra coisa
-  achados.sort((a, b) => (a.previsto - b.previsto) || (new Date(b.data_hora) - new Date(a.data_hora))); // reais primeiro; previstos no fim
+  achados.sort((a, b) => new Date(b.data_hora) - new Date(a.data_hora)); // linha do tempo: mais novo primeiro
+  const limite = achados.length >= 100;
   const tot = achados.filter((l) => l.conta_como === 'Gasto' && !l.previsto).reduce((s, l) => s + Number(l.valor), 0);
-  corpo.replaceChildren(h('div', { class: 'card', style: 'flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--verde-claro)' },
-    h('span', {}, achados.length ? `${achados.length} encontrado(s)` + (tot ? ` · gastos ${R(tot)}` : '') : 'Nada encontrado.'),
-    h('button', { class: 'btn sec', style: 'min-height:40px', onclick: () => { st.busca = ''; render(); } }, 'Limpar')));
+  const chipsPer = h('div', { class: 'chips' }, [['12m', 'Últimos 12 meses'], ['ano', 'Este ano'], ['tudo', 'Tudo']].map(([id, rot]) =>
+    h('button', { class: 'chip' + (per === id ? ' on' : ''), 'aria-pressed': String(per === id), onclick: () => { st.buscaPer = id; buscarLancamentos(corpo); } }, rot)));
+  corpo.replaceChildren(chipsPer, h('div', { class: 'card', style: 'flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--verde-claro)' },
+    h('span', {}, achados.length ? `${limite ? 'Mais de 100' : achados.length} encontrado(s)` + (tot ? ` · gastos ${R(tot)}` : '') : 'Nada encontrado neste período.'),
+    h('button', { class: 'btn sec', style: 'min-height:40px', onclick: () => { st.busca = ''; render(); } }, 'Limpar')),
+    ...(limite ? [h('div', { class: 'nota', style: 'padding:0 4px' }, 'Mostrando os 100 mais recentes. Digite algo mais específico ou escolha um período menor.')] : []));
   let mesAtual = '';
   for (const l of achados) {
     const d = new Date(l.data_hora);
     const m = nomeMes(new Date(d.getFullYear(), d.getMonth(), 1));
-    const rot = l.previsto ? `Previsto · ${m}` : m;
-    if (rot !== mesAtual) { mesAtual = rot; corpo.append(h('div', { class: 'dia' }, rot)); }
+    if (m !== mesAtual) { mesAtual = m; corpo.append(h('div', { class: 'dia' }, m)); }
     corpo.append(itemLanc(l));
   }
 }
