@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v31';
+const VERSAO_TELAS = 'v32';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -285,7 +285,7 @@ async function telaInicio(wrap) {
   const corpo = h('div', { class: 'corpo' });
   wrap.append(corpo);
   // App do Android desatualizado: oferece atualizar (o número sobe a cada APK publicado)
-  const APK_ATUAL = 9;
+  const APK_ATUAL = 10;
   let vInst = 0;
   try { vInst = window.GastosAndroid && window.GastosAndroid.versao ? Number(window.GastosAndroid.versao()) : 0; } catch {}
   if (vInst && vInst < APK_ATUAL) {
@@ -294,6 +294,7 @@ async function telaInicio(wrap) {
       h('div', { class: 'nota', style: 'color:var(--texto)' }, 'Toque em Atualizar e depois em Instalar. Seus dados continuam no app.'),
       h('button', { class: 'btn', onclick: () => window.GastosAndroid.verificarAtualizacao() }, 'Atualizar o app')));
   }
+  if (!vInst) cartaoAvisos(corpo);
   if (filtro) {
     corpo.append(h('div', { class: 'card', style: 'flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--verde-claro)' },
       h('span', {}, 'Mostrando: ', h('b', {}, nomePessoa(filtro))),
@@ -1741,6 +1742,59 @@ function telaCriarSenha() {
   document.getElementById('app').replaceChildren(form);
 }
 
+// ---------- Avisos no celular (iPhone/navegador: Web Push; Android: o app busca sozinho) ----------
+const pushOk = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function b64url(s) {
+  const p = (s + '='.repeat((4 - s.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+  return Uint8Array.from(atob(p), (c) => c.charCodeAt(0));
+}
+async function inscricaoAtual() {
+  if (!pushOk()) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+async function salvarInscricao(sub) {
+  const j = sub.toJSON();
+  await sb.from('push_inscricoes').upsert({ endpoint: j.endpoint, user_id: st.eu, p256dh: j.keys.p256dh, auth: j.keys.auth });
+}
+async function ativarAvisos() {
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Os avisos não foram permitidos. Dá para liberar nos Ajustes do celular, em Notificações.');
+  const r = await fetch(SB_URL + '/functions/v1/avisos', { headers: { apikey: SB_KEY } });
+  const { vapid } = await r.json();
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription())
+    || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64url(vapid) });
+  await salvarInscricao(sub);
+}
+function cartaoAvisos(corpo) {
+  if (!pushOk() || Notification.permission === 'denied') return;
+  try { if (localStorage.getItem('avisos-dispensado')) return; } catch {}
+  const msg = h('div', { class: 'nota' });
+  const card = h('div', { class: 'card', style: 'background:var(--verde-claro)' },
+    h('h2', {}, 'Avisos no celular'),
+    h('div', { class: 'nota', style: 'color:var(--texto)' }, 'Avisa quando alguém põe itens na lista de compras e no dia de vencimento dos compromissos. Nada além disso.'),
+    msg,
+    h('div', { style: 'display:flex;gap:8px' },
+      h('button', { class: 'btn', style: 'flex:1', onclick: async (e) => {
+        e.target.disabled = true; msg.textContent = '';
+        try { await ativarAvisos(); card.replaceChildren(h('div', { class: 'nota', style: 'color:var(--texto)' }, '✓ Avisos ligados.')); setTimeout(() => card.remove(), 2500); }
+        catch (er) { msg.textContent = erroMsg(er); e.target.disabled = false; }
+      } }, 'Ativar avisos'),
+      h('button', { class: 'btn sec', onclick: () => { try { localStorage.setItem('avisos-dispensado', '1'); } catch {} card.remove(); } }, 'Agora não')));
+  card.hidden = true;
+  corpo.append(card);
+  inscricaoAtual().then(async (sub) => {
+    if (sub && Notification.permission === 'granted') { try { await salvarInscricao(sub); } catch {} return; }
+    card.hidden = false;
+  }).catch(() => {});
+}
+function irParaAba(aba) {
+  if (!aba || !st.cad || !['inicio', 'lanc', 'compras', 'carro', 'analise'].includes(aba)) return;
+  st.aba = aba; render(); window.scrollTo(0, 0);
+}
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.aba) irParaAba(e.data.aba); });
+
 let criandoSenha = TIPO_LINK === 'invite' || TIPO_LINK === 'recovery';
 sb.auth.onAuthStateChange((evento) => {
   if (evento === 'PASSWORD_RECOVERY') { criandoSenha = true; telaCriarSenha(); }
@@ -1763,6 +1817,8 @@ async function iniciar() {
     try { await sb.rpc('gerar_compromissos'); } catch {}
     await carregarMes();
     render();
+    const abaUrl = new URLSearchParams(location.search).get('aba');
+    if (abaUrl) { history.replaceState(null, '', location.pathname); irParaAba(abaUrl); }
   } catch (e) {
     document.getElementById('app').replaceChildren(h('div', { class: 'login' }, h('h1', {}, 'Não consegui carregar'),
       h('p', { class: 'erro' }, erroMsg(e)), h('button', { class: 'btn', onclick: () => location.reload() }, 'Tentar de novo')));
