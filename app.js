@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v34';
+const VERSAO_TELAS = 'v35';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -432,7 +432,7 @@ function telaLancamentos(wrap) {
   corpo.append(h('div', { class: 'btns' },
     h('button', { class: 'btn', onclick: () => abrirCompromisso(null) }, '+ Compromisso mensal'),
     h('button', { class: 'btn sec', onclick: listaCompromissos }, 'Ver compromissos'),
-    h('button', { class: 'btn sec', onclick: abrirFuncionarias }, 'Funcionária')));
+    h('button', { class: 'btn sec', onclick: abrirFuncionarias }, 'Colaboradores')));
   wrap.append(corpo);
   let lista = st.lancs.filter((l) => (st.verTransf ? true : ['Gasto', 'Receita', 'Investimento'].includes(l.conta_como)));
   if (st.pessoa !== 'todos') lista = lista.filter((l) => l.pessoa_id === st.pessoa || partesDe(l).some((p) => p.pessoa_id === st.pessoa));
@@ -882,7 +882,7 @@ async function abrirCompromisso(c) {
   const novo = !c;
   c = c || { nome: '', valor: '', dia: new Date().getDate(), categoria_id: null, pessoa_id: 'familia', conta_como: 'Gasto', varia: false, palavra: '', meses: null,
     inicio: `${st.mes.getFullYear()}-${String(st.mes.getMonth() + 1).padStart(2, '0')}-01` };
-  const nome = h('input', { value: c.nome, placeholder: 'ex.: Salário da funcionária', maxlength: '60' });
+  const nome = h('input', { value: c.nome, placeholder: 'ex.: Salário da Maria', maxlength: '60' });
   const valor = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: c.valor || '' });
   const dia = h('input', { type: 'number', inputmode: 'numeric', min: '1', max: '31', value: c.dia });
   const como = h('select', {}, opcoes([['Gasto', 'Gasto (sai dinheiro)'], ['Receita', 'Entrada (entra dinheiro)']], c.conta_como));
@@ -892,7 +892,7 @@ async function abrirCompromisso(c) {
   const meses = h('input', { type: 'number', inputmode: 'numeric', min: '1', max: '120', value: c.meses || '' });
   const inicio = h('input', { type: 'month', value: String(c.inicio).slice(0, 7) });
   const varia = h('input', { type: 'checkbox', checked: !!c.varia });
-  const palavra = h('input', { value: c.palavra || '', placeholder: 'ex.: nome da funcionária, CEMIG, COPASA', maxlength: '40' });
+  const palavra = h('input', { value: c.palavra || '', placeholder: 'ex.: nome do colaborador, CEMIG, COPASA', maxlength: '40' });
   const campoMeses = h('label', { class: 'campo' }, 'Quantos meses', meses);
   const campoCat = h('label', { class: 'campo' }, 'Categoria', cat);
   const mostrar = () => { campoMeses.hidden = repete.value !== 'meses'; campoCat.hidden = como.value !== 'Gasto'; };
@@ -1745,7 +1745,7 @@ function referenciaFeriasDecimo(f) {
     mesesPer, feriasProp: num(sal / 12 * mesesPer * 4 / 3), feriasCheia: num(sal * 4 / 3) };
 }
 
-/** Recibo (o mesmo para ela e para vocês). */
+/** Recibo (o mesmo para o colaborador e para vocês). */
 function blocoRecibo(r, nome) {
   const linha = (a, b, cls) => h('div', { class: 'lin' }, h('span', {}, a), h('span', { class: cls || '' }, b));
   const mes = new Date(r.mes + 'T12:00:00');
@@ -1767,17 +1767,20 @@ function blocoRecibo(r, nome) {
       : r.enviado_em ? h('div', { class: 'nota' }, `Enviado em ${dataCurta(r.enviado_em)} às ${hora(r.enviado_em)} · aguardando confirmação`) : null);
 }
 
+/** Primeiro nome, com só a inicial maiúscula (IDELMA PERPETUA → Idelma). */
+const curto = (f) => { const p = String(f.nome || '').trim().split(/\s+/)[0] || ''; return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase(); };
+
 async function abrirFuncionarias() {
   const r = await sb.from('funcionarios').select('*').order('ativo', { ascending: false }).order('nome');
   if (r.error) return toast('Não carregou: ' + erroMsg(r.error), 4000);
   const ativas = r.data.filter((f) => f.ativo);
   if (ativas.length === 1 && r.data.length === 1) return painelFuncionaria(ativas[0], inicioDoMes(new Date()));
-  abrirSheet(h('h3', {}, 'Funcionária'),
+  abrirSheet(h('h3', {}, 'Colaboradores'),
     r.data.length ? r.data.map((f) => h('button', { class: 'item' + (f.ativo ? '' : ' prev'), onclick: () => painelFuncionaria(f, inicioDoMes(new Date())) },
       h('div', { class: 'itemcorpo' }, h('div', { class: 't' }, h('span', { class: 'n' }, f.nome), h('span', { class: 'v' }, R(f.salario))),
         h('div', { class: 'd' }, f.ativo ? `desde ${dataBR(f.admissao)} · paga dia ${f.dia_pagamento}` : `saiu em ${dataBR(f.saida)}`))))
-      : h('div', { class: 'vazio' }, 'Nenhuma funcionária cadastrada.'),
-    h('button', { class: 'btn', onclick: () => cadastroFuncionaria(null) }, '+ Cadastrar funcionária'));
+      : h('div', { class: 'vazio' }, 'Nenhum colaborador cadastrado.'),
+    h('button', { class: 'btn', onclick: () => cadastroFuncionaria(null) }, '+ Cadastrar colaborador'));
 }
 
 async function cadastroFuncionaria(f) {
@@ -1786,7 +1789,7 @@ async function cadastroFuncionaria(f) {
   const cs = await sb.from('compromissos').select('id, nome, valor').eq('ativo', true).order('nome');
   const lista = cs.data || [];
   const sug = f.compromisso_id || (lista.find((c) => /funcion|domest|diarista|salário|salario/i.test(c.nome)) || {}).id;
-  const nome = h('input', { value: f.nome, placeholder: 'Nome dela', maxlength: '60' });
+  const nome = h('input', { value: f.nome, placeholder: 'Nome completo', maxlength: '60' });
   const adm = h('input', { type: 'date', value: f.admissao });
   const sal = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: f.salario });
   const dia = h('input', { type: 'number', inputmode: 'numeric', min: '1', max: '31', value: f.dia_pagamento });
@@ -1796,7 +1799,7 @@ async function cadastroFuncionaria(f) {
     b.onclick = () => { if (dias.has(d)) dias.delete(d); else dias.add(d); b.classList.toggle('on', dias.has(d)); b.setAttribute('aria-pressed', String(dias.has(d))); };
     return b;
   }));
-  const comp = h('select', {}, opcoes(lista.map((c) => [c.id, `${c.nome} · ${R(c.valor)}`]), sug, 'Nenhum'));
+  const comp = h('select', {}, opcoes([['novo', '+ Criar compromisso com o salário'], ...lista.map((c) => [c.id, `${c.nome} · ${R(c.valor)}`])], sug || (novo || !f.compromisso_id ? 'novo' : ''), 'Nenhum'));
   const ocultos = new Set(f.grupos_ocultos || ['Farmácia']);
   const chipsGrupos = h('div', { class: 'chips' }, GRUPOS.map((g) => {
     const b = h('button', { class: 'chip' + (ocultos.has(g) ? '' : ' on'), type: 'button', 'aria-pressed': String(!ocultos.has(g)) }, g);
@@ -1805,24 +1808,33 @@ async function cadastroFuncionaria(f) {
   }));
   const salvar = h('button', { class: 'btn', onclick: async () => {
     const v = Number(String(sal.value).replace(',', '.')), d = Number(dia.value);
-    if (nome.value.trim().length < 2) return toast('Escreva o nome dela.');
-    if (!adm.value) return toast('Informe a data em que ela começou.');
+    if (nome.value.trim().length < 2) return toast('Escreva o nome.');
+    if (!adm.value) return toast('Informe a data de início.');
     if (!(v > 0)) return toast('Informe o salário.');
     if (!(d >= 1 && d <= 31)) return toast('Dia do pagamento: de 1 a 31.');
-    if (!dias.size) return toast('Marque os dias da semana em que ela trabalha.');
-    const dados = { nome: nome.value.trim(), admissao: adm.value, salario: v, dia_pagamento: d, dias_semana: [...dias].sort(), compromisso_id: comp.value ? Number(comp.value) : null, grupos_ocultos: [...ocultos] };
+    if (!dias.size) return toast('Marque os dias da semana de trabalho.');
+    const dados = { nome: nome.value.trim(), admissao: adm.value, salario: v, dia_pagamento: d, dias_semana: [...dias].sort(), compromisso_id: comp.value && comp.value !== 'novo' ? Number(comp.value) : null, grupos_ocultos: [...ocultos] };
     salvar.disabled = true;
+    if (comp.value === 'novo') {
+      const cat = st.cad.categorias.find((c) => /funcion|colabor|servi[cç]os da casa/i.test(c.nome));
+      const pnome = curto({ nome: dados.nome });
+      const nc = await sb.from('compromissos').insert({ nome: `Salário de ${pnome}`, valor: dados.salario, dia: dados.dia_pagamento,
+        categoria_id: cat ? cat.id : null, pessoa_id: 'familia', conta_como: 'Gasto', varia: false, palavra: pnome.length >= 3 ? pnome : null }).select().single();
+      if (nc.error) { salvar.disabled = false; return toast('Não criou o compromisso: ' + erroMsg(nc.error), 4000); }
+      dados.compromisso_id = nc.data.id;
+      await sb.rpc('refazer_compromisso', { p_id: nc.data.id });
+    }
     const r = novo ? await sb.from('funcionarios').insert(dados).select().single() : await sb.from('funcionarios').update(dados).eq('id', f.id).select().single();
     if (r.error) { salvar.disabled = false; return toast('Não salvou: ' + erroMsg(r.error), 4000); }
     toast('Salvo.'); painelFuncionaria(r.data, inicioDoMes(new Date()));
   } }, 'Salvar');
-  abrirSheet(h('h3', {}, novo ? 'Cadastrar funcionária' : 'Editar cadastro'),
+  abrirSheet(h('h3', {}, novo ? 'Cadastrar colaborador' : 'Editar cadastro'),
     h('label', { class: 'campo' }, 'Nome', nome),
     h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Começou em', adm), h('label', { class: 'campo' }, 'Salário (R$)', sal)),
     h('label', { class: 'campo' }, 'Dia do pagamento', dia),
-    h('div', { class: 'campo' }, 'Dias da semana em que ela trabalha', chipsDias),
-    h('div', { class: 'campo' }, 'Grupos da lista de compras que ela vê (os desmarcados ficam escondidos para ela)', chipsGrupos),
-    h('label', { class: 'campo' }, 'Compromisso mensal do salário (o recibo acerta o valor previsto do mês)', comp),
+    h('div', { class: 'campo' }, 'Dias da semana de trabalho', chipsDias),
+    h('div', { class: 'campo' }, 'Grupos da lista de compras que aparecem para essa pessoa (os desmarcados ficam escondidos)', chipsGrupos),
+    h('label', { class: 'campo' }, 'Compromisso mensal do salário (o recibo acerta o valor previsto do mês; "Criar" faz um novo com o salário e o dia acima)', comp),
     h('div', { class: 'btns' }, salvar, novo ? null : h('button', { class: 'btn sec', onclick: () => painelFuncionaria(f, inicioDoMes(new Date())) }, 'Voltar')));
 }
 
@@ -1844,7 +1856,7 @@ async function painelFuncionaria(f, mes) {
     const rec = { ...c, mes: ini, adiantamentos_obs: adiantObs.value.trim(), enviado_em: recibo && !mudou(c) ? recibo.enviado_em : null,
       confirmado_em: recibo && !mudou(c) ? recibo.confirmado_em : null };
     resumo.replaceChildren(...[blocoRecibo(rec, f.nome),
-      mudou(c) ? h('div', { class: 'nota', style: 'color:var(--ambar);font-weight:700' }, 'Mudou depois de enviado. Envie de novo para ela confirmar o valor certo.') : null].filter(Boolean));
+      mudou(c) ? h('div', { class: 'nota', style: 'color:var(--ambar);font-weight:700' }, `Mudou depois de enviado. Envie de novo para ${curto(f)} confirmar o valor certo.`) : null].filter(Boolean));
   };
   adiant.oninput = desenharResumo; adiantObs.oninput = desenharResumo;
 
@@ -1892,12 +1904,12 @@ async function painelFuncionaria(f, mes) {
     if (r.error) { enviar.disabled = false; return toast('Não salvou: ' + erroMsg(r.error), 4000); }
     const e = await sb.rpc('enviar_recibo', { p_id: r.data.id });
     if (e.error) { enviar.disabled = false; return toast('Não enviou: ' + erroMsg(e.error), 4000); }
-    toast(f.user_id ? `Recibo enviado. ${f.nome.split(' ')[0]} recebe o aviso para confirmar.` : 'Recibo salvo. Ela ainda não tem acesso ao app para confirmar.', 4500);
+    toast(f.user_id ? `Recibo enviado. ${curto(f)} recebe o aviso para confirmar.` : `Recibo salvo. ${curto(f)} ainda não tem acesso ao app para confirmar.`, 4500);
     painelFuncionaria(f, mes);
-  } }, recibo && recibo.enviado_em ? 'Enviar de novo' : `Enviar recibo para ${f.nome.split(' ')[0]}`);
+  } }, recibo && recibo.enviado_em ? 'Enviar de novo' : `Enviar recibo para ${curto(f)}`);
 
   const ref = referenciaFeriasDecimo(f);
-  const primeiro = f.nome.split(' ')[0];
+  const primeiro = curto(f);
   abrirSheet(
     h('h3', {}, f.nome),
     h('div', { class: 'nota' }, `Desde ${dataBR(f.admissao)} · ${R(f.salario)} · paga dia ${f.dia_pagamento} · ${[1, 2, 3, 4, 5, 6, 0].filter((d) => f.dias_semana.includes(d)).map((d) => DSEM[d]).join(', ')}`
@@ -1916,11 +1928,11 @@ async function painelFuncionaria(f, mes) {
       h('div', { class: 'lin' }, h('span', {}, `13º de ${new Date().getFullYear()} até agora (${ref.meses13}/12)`), h('span', {}, R(ref.decimo))),
       h('div', { class: 'lin' }, h('span', {}, `Férias proporcionais (${ref.mesesPer}/12, com 1/3)`), h('span', {}, R(ref.feriasProp))),
       h('div', { class: 'nota' }, `Período de férias atual: ${dataBR(ref.iniPer)} a ${dataBR(ref.fimPer)}. Ao completar, são 30 dias com salário + 1/3 = ${R(ref.feriasCheia)}.`
-        + (ref.anos >= 1 ? ` Ela já tem ${ref.anos} ${ref.anos === 1 ? 'ano' : 'anos'} de casa.` : '') + ' Conta de referência; meses com 15 dias ou mais contam.')),
+        + (ref.anos >= 1 ? ` ${primeiro} já tem ${ref.anos} ${ref.anos === 1 ? 'ano' : 'anos'} de casa.` : '') + ' Conta de referência; meses com 15 dias ou mais contam.')),
     h('div', { class: 'btns' },
       h('button', { class: 'btn sec', onclick: () => acessoFuncionaria(f) }, f.user_id ? 'Acesso ao app' : `Dar acesso a ${primeiro}`),
       h('button', { class: 'btn sec', onclick: () => cadastroFuncionaria(f) }, 'Editar cadastro')),
-    f.ativo ? h('button', { class: 'btn perigo', onclick: () => encerrarFuncionaria(f) }, 'Saída da funcionária') : null);
+    f.ativo ? h('button', { class: 'btn perigo', onclick: () => encerrarFuncionaria(f) }, `Saída de ${primeiro}`) : null);
   desenharResumo();
 }
 
@@ -1934,16 +1946,16 @@ async function chamarFuncionaria(corpo) {
 }
 const pinNovo = () => String(Math.floor(100000 + Math.random() * 900000));
 const instrucaoAcesso = (usuario, pin) => h('div', { class: 'card', style: 'gap:6px' },
-  h('b', {}, 'No celular dela'),
+  h('b', {}, 'No celular do colaborador'),
   h('div', {}, '1. Abra no navegador: ', h('b', {}, 'atacadolima.github.io/gastos-familia')),
   h('div', {}, '2. Usuário: ', h('b', {}, usuario), ' · Senha: ', h('b', {}, pin)),
   h('div', {}, '3. Menu do navegador → "Adicionar à tela de início". Depois abra pelo ícone e toque em "Ativar avisos".'),
-  h('div', { class: 'nota' }, 'Anote a senha: ela não aparece de novo. Se esquecer, é só trocar aqui.'));
+  h('div', { class: 'nota' }, 'Anote a senha: ela não aparece de novo. Se for esquecida, é só trocar aqui.'));
 
 function acessoFuncionaria(f) {
   const voltar = h('button', { class: 'btn sec', onclick: () => painelFuncionaria(f, inicioDoMes(new Date())) }, 'Voltar');
   if (!f.user_id) {
-    const usuario = h('input', { value: f.nome.split(' ')[0].toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9.]/g, ''), autocapitalize: 'off', maxlength: '30' });
+    const usuario = h('input', { value: curto(f).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9.]/g, ''), autocapitalize: 'off', maxlength: '30' });
     const pin = h('input', { value: pinNovo(), inputmode: 'numeric', maxlength: '6' });
     const msg = h('div', { class: 'erro', role: 'alert' });
     const criar = h('button', { class: 'btn', onclick: async () => {
@@ -1954,8 +1966,8 @@ function acessoFuncionaria(f) {
         abrirSheet(h('h3', {}, 'Acesso criado'), instrucaoAcesso(j.usuario, pin.value.trim()), voltar);
       } catch (e) { msg.textContent = e.message; criar.disabled = false; }
     } }, 'Criar acesso');
-    return abrirSheet(h('h3', {}, `Acesso de ${f.nome.split(' ')[0]}`),
-      h('div', { class: 'nota' }, 'Ela entra só com usuário e senha de 6 números, sem e-mail. Vê apenas a lista de compras e os recibos dela.'),
+    return abrirSheet(h('h3', {}, `Acesso de ${curto(f)}`),
+      h('div', { class: 'nota' }, `${curto(f)} entra só com usuário e senha de 6 números, sem e-mail, e vê apenas a lista de compras e os próprios recibos.`),
       h('label', { class: 'campo' }, 'Usuário', usuario), h('label', { class: 'campo' }, 'Senha (6 números)', pin), msg, h('div', { class: 'btns' }, criar, voltar));
   }
   const pin = h('input', { value: pinNovo(), inputmode: 'numeric', maxlength: '6' });
@@ -1966,8 +1978,8 @@ function acessoFuncionaria(f) {
       abrirSheet(h('h3', {}, 'Senha trocada'), instrucaoAcesso(f.usuario, pin.value.trim()), voltar);
     } catch (e) { msg.textContent = e.message; trocar.disabled = false; }
   } }, 'Trocar senha');
-  abrirSheet(h('h3', {}, `Acesso de ${f.nome.split(' ')[0]}`),
-    h('div', { class: 'card' }, h('div', {}, 'Usuário: ', h('b', {}, f.usuario || '—')), h('div', { class: 'nota' }, 'Ela vê a lista de compras e os recibos dela. Nada dos gastos da família.')),
+  abrirSheet(h('h3', {}, `Acesso de ${curto(f)}`),
+    h('div', { class: 'card' }, h('div', {}, 'Usuário: ', h('b', {}, f.usuario || '—')), h('div', { class: 'nota' }, `${curto(f)} vê a lista de compras e os próprios recibos. Nada dos gastos da família.`)),
     h('label', { class: 'campo' }, 'Nova senha (6 números)', pin), msg, h('div', { class: 'btns' }, trocar, voltar));
 }
 
@@ -1985,9 +1997,9 @@ function encerrarFuncionaria(f) {
       painelFuncionaria(f, inicioDoMes(new Date(saida.value + 'T12:00:00')));
     } catch (e) { msg.textContent = e.message; ok.disabled = false; }
   } }, 'Encerrar acesso');
-  abrirSheet(h('h3', {}, `Saída de ${f.nome.split(' ')[0]}`),
+  abrirSheet(h('h3', {}, `Saída de ${curto(f)}`),
     h('label', { class: 'campo' }, 'Último dia de trabalho', saida),
-    h('div', { class: 'nota' }, 'O login dela para de funcionar na hora. Recibos, faltas e confirmações ficam guardados. O recibo do último mês sai proporcional até esse dia.'),
+    h('div', { class: 'nota' }, `O login de ${curto(f)} para de funcionar na hora. Recibos, faltas e confirmações ficam guardados. O recibo do último mês sai proporcional até esse dia.`),
     msg, h('div', { class: 'btns' }, ok, h('button', { class: 'btn sec', onclick: () => painelFuncionaria(f, inicioDoMes(new Date())) }, 'Voltar')));
 }
 
