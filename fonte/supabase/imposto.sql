@@ -42,3 +42,25 @@ begin
 end $$;
 revoke all on function public.herdar_dedutivel() from public, anon;
 grant execute on function public.herdar_dedutivel() to authenticated, service_role;
+
+-- Também herda pelo nome: gasto novo com o mesmo nome de um já marcado como dedutível (ex.: mensalidade no cartão)
+create or replace function public.herdar_dedutivel() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int; m int;
+begin
+  with s as (
+    select distinct on (serie) serie, ded_tipo, ded_pessoa, ded_prestador, ded_doc from lancamentos
+     where serie is not null and ded_tipo is not null order by serie, atualizado_em desc)
+  update lancamentos l set ded_tipo = s.ded_tipo, ded_pessoa = s.ded_pessoa,
+         ded_prestador = coalesce(l.ded_prestador, s.ded_prestador), ded_doc = coalesce(l.ded_doc, s.ded_doc)
+    from s where l.serie = s.serie and l.ded_tipo is null;
+  get diagnostics n = row_count;
+  with s as (
+    select distinct on (base_desc(descricao)) base_desc(descricao) b, ded_tipo, ded_pessoa, ded_prestador, ded_doc from lancamentos
+     where ded_tipo is not null and length(base_desc(descricao)) >= 5 order by base_desc(descricao), atualizado_em desc)
+  update lancamentos l set ded_tipo = s.ded_tipo, ded_pessoa = s.ded_pessoa,
+         ded_prestador = coalesce(l.ded_prestador, s.ded_prestador), ded_doc = coalesce(l.ded_doc, s.ded_doc)
+    from s where base_desc(l.descricao) = s.b and l.ded_tipo is null and l.conta_como = 'Gasto';
+  get diagnostics m = row_count;
+  return n + m;
+end $$;

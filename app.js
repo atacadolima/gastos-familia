@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v27';
+const VERSAO_TELAS = 'v28';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -181,6 +181,7 @@ const CAT_ICONE = [
   [/combust/i, 'M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M14 9h2a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0V8l-3-3M7 8h4', '#1B3FBF', '#E2E8FB'],
   [/^carro/i, 'M5 16l1.5-5A2 2 0 0 1 8.4 9.5h7.2a2 2 0 0 1 1.9 1.5L19 16M4 16h16v3H4zM7 19v2M17 19v2', '#1B3FBF', '#E2E8FB'],
   [/restaur|lanche/i, 'M6 3v8a3 3 0 0 0 6 0V3M9 3v18M17 3c-2 2-2 6 0 8v10', '#A8461A', '#FBE7D9'],
+  [/m[eé]dic/i, 'M6 3v6a4 4 0 0 0 8 0V3M10 13v3a5 5 0 0 0 10 0v-2M20 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', '#0E7C86', '#DDF1F2'],
   [/farm|saúde/i, 'M10 3h4v4l3 3v11H7V10l3-3zM10 15h4M12 13v4', '#B0285A', '#F7DDE6'],
   [/^casa/i, 'M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z', '#0E7C86', '#DDF1F2'],
   [/contas/i, 'M13 2L4 14h7l-1 8 9-12h-7z', '#B07A00', '#FFF2C7'],
