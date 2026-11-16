@@ -1797,6 +1797,12 @@ async function cadastroFuncionaria(f) {
     return b;
   }));
   const comp = h('select', {}, opcoes(lista.map((c) => [c.id, `${c.nome} · ${R(c.valor)}`]), sug, 'Nenhum'));
+  const ocultos = new Set(f.grupos_ocultos || ['Farmácia']);
+  const chipsGrupos = h('div', { class: 'chips' }, GRUPOS.map((g) => {
+    const b = h('button', { class: 'chip' + (ocultos.has(g) ? '' : ' on'), type: 'button', 'aria-pressed': String(!ocultos.has(g)) }, g);
+    b.onclick = () => { if (ocultos.has(g)) ocultos.delete(g); else ocultos.add(g); b.classList.toggle('on', !ocultos.has(g)); b.setAttribute('aria-pressed', String(!ocultos.has(g))); };
+    return b;
+  }));
   const salvar = h('button', { class: 'btn', onclick: async () => {
     const v = Number(String(sal.value).replace(',', '.')), d = Number(dia.value);
     if (nome.value.trim().length < 2) return toast('Escreva o nome dela.');
@@ -1804,7 +1810,7 @@ async function cadastroFuncionaria(f) {
     if (!(v > 0)) return toast('Informe o salário.');
     if (!(d >= 1 && d <= 31)) return toast('Dia do pagamento: de 1 a 31.');
     if (!dias.size) return toast('Marque os dias da semana em que ela trabalha.');
-    const dados = { nome: nome.value.trim(), admissao: adm.value, salario: v, dia_pagamento: d, dias_semana: [...dias].sort(), compromisso_id: comp.value ? Number(comp.value) : null };
+    const dados = { nome: nome.value.trim(), admissao: adm.value, salario: v, dia_pagamento: d, dias_semana: [...dias].sort(), compromisso_id: comp.value ? Number(comp.value) : null, grupos_ocultos: [...ocultos] };
     salvar.disabled = true;
     const r = novo ? await sb.from('funcionarios').insert(dados).select().single() : await sb.from('funcionarios').update(dados).eq('id', f.id).select().single();
     if (r.error) { salvar.disabled = false; return toast('Não salvou: ' + erroMsg(r.error), 4000); }
@@ -1815,6 +1821,7 @@ async function cadastroFuncionaria(f) {
     h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Começou em', adm), h('label', { class: 'campo' }, 'Salário (R$)', sal)),
     h('label', { class: 'campo' }, 'Dia do pagamento', dia),
     h('div', { class: 'campo' }, 'Dias da semana em que ela trabalha', chipsDias),
+    h('div', { class: 'campo' }, 'Grupos da lista de compras que ela vê (os desmarcados ficam escondidos para ela)', chipsGrupos),
     h('label', { class: 'campo' }, 'Compromisso mensal do salário (o recibo acerta o valor previsto do mês)', comp),
     h('div', { class: 'btns' }, salvar, novo ? null : h('button', { class: 'btn sec', onclick: () => painelFuncionaria(f, inicioDoMes(new Date())) }, 'Voltar')));
 }
@@ -1894,7 +1901,7 @@ async function painelFuncionaria(f, mes) {
   abrirSheet(
     h('h3', {}, f.nome),
     h('div', { class: 'nota' }, `Desde ${dataBR(f.admissao)} · ${R(f.salario)} · paga dia ${f.dia_pagamento} · ${[1, 2, 3, 4, 5, 6, 0].filter((d) => f.dias_semana.includes(d)).map((d) => DSEM[d]).join(', ')}`
-      + (f.ativo ? '' : ` · saiu em ${dataBR(f.saida)}`)),
+      + ((f.grupos_ocultos || []).length ? ` · na lista, não vê: ${f.grupos_ocultos.join(', ')}` : '') + (f.ativo ? '' : ` · saiu em ${dataBR(f.saida)}`)),
     h('div', { class: 'lin', style: 'align-items:center' },
       h('button', { class: 'btn sec', style: 'min-height:40px;min-width:44px', 'aria-label': 'Mês anterior', onclick: () => painelFuncionaria(f, addMes(mes, -1)) }, '‹'),
       h('b', {}, nomeMes(mes)),

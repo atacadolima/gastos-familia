@@ -105,3 +105,12 @@ begin
 end $$;
 revoke all on function public.confirmar_recibo(int) from public, anon;
 grant execute on function public.confirmar_recibo(int) to authenticated;
+
+-- Grupos da lista de compras que a funcionária NÃO vê (configurável no cadastro; padrão: Farmácia)
+alter table funcionarios add column if not exists grupos_ocultos text[] not null default '{Farmácia}';
+create or replace function public.grupo_oculto_para_mim(p_grupo text) returns boolean
+language sql stable security definer set search_path = public as
+$$ select exists (select 1 from funcionarios where user_id = auth.uid() and ativo and coalesce(p_grupo, 'Outros') = any(grupos_ocultos)) $$;
+drop policy if exists ver on compras_itens;
+create policy ver on compras_itens for select to authenticated
+  using (eh_membro() or (eh_membro_compras() and (criado_por = auth.uid() or not grupo_oculto_para_mim(grupo))));
