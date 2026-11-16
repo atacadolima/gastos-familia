@@ -52,7 +52,7 @@ begin
     continue when a.ultimo > now() - interval '2 minutes';
     select coalesce(nome, 'Alguém') into autor from membros where user_id = a.criado_por;
     nomes := case when length(a.itens) > 120 then left(a.itens, 117) || '…' else a.itens end;
-    for m in select user_id from membros where user_id <> a.criado_por loop
+    for m in select user_id from membros where user_id <> a.criado_por and papel = 'completo' loop
       insert into notificacoes (user_id, titulo, texto, tag, aba)
       values (m.user_id, case when a.qtd = 1 then coalesce(autor,'Alguém') || ' adicionou à lista de compras'
                               else coalesce(autor,'Alguém') || ' adicionou ' || a.qtd || ' itens à lista' end,

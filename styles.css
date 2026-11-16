@@ -35,6 +35,7 @@ button { cursor: pointer; }
 .card h2 { margin: 0; font-size: 15px; font-weight: 800; color: var(--texto); text-transform: none; }
 .lin { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 15px; }
 .lin .v { font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lin .ambar { color: var(--ambar); font-weight: 700; white-space: nowrap; }
 .lin.total { border-top: 1px solid var(--linha); padding-top: 10px; font-weight: 700; }
 .barra { height: 8px; background: #E7E9E6; border-radius: 4px; overflow: hidden; }
 .barra > div { height: 8px; border-radius: 4px; background: var(--verde); }

@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v32';
+const VERSAO_TELAS = 'v33';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -431,7 +431,8 @@ function telaLancamentos(wrap) {
   if (st.busca && st.busca.length >= 2) { wrap.append(corpo); buscarLancamentos(corpo); return; }
   corpo.append(h('div', { class: 'btns' },
     h('button', { class: 'btn', onclick: () => abrirCompromisso(null) }, '+ Compromisso mensal'),
-    h('button', { class: 'btn sec', onclick: listaCompromissos }, 'Ver compromissos')));
+    h('button', { class: 'btn sec', onclick: listaCompromissos }, 'Ver compromissos'),
+    h('button', { class: 'btn sec', onclick: abrirFuncionarias }, 'Funcionária')));
   wrap.append(corpo);
   let lista = st.lancs.filter((l) => (st.verTransf ? true : ['Gasto', 'Receita', 'Investimento'].includes(l.conta_como)));
   if (st.pessoa !== 'todos') lista = lista.filter((l) => l.pessoa_id === st.pessoa || partesDe(l).some((p) => p.pessoa_id === st.pessoa));
@@ -1656,10 +1657,12 @@ async function telaComprasSimples() {
   corpo.append(h('div', { class: 'card' }, h('span', { style: 'font-size:15px;font-weight:600' }, 'Está faltando alguma coisa?'),
     h('div', { class: 'campo' }, inp), btn));
   listaAgrupada(corpo, true);
+  cartaoAvisos(corpo, 'Avisa quando chegar um recibo seu para conferir. Nada além disso.');
   corpo.append(h('div', { class: 'nota', style: 'text-align:center' }, 'Você pode editar ou apagar o que você mesma adicionou.'),
     h('button', { class: 'btn perigo', onclick: async () => { await sb.auth.signOut(); location.reload(); } }, 'Sair'));
   wrap.append(corpo);
   app.replaceChildren(wrap);
+  recibosDaFuncionaria(corpo).catch(() => {});
 }
 
 function editarItem(it) {
@@ -1691,27 +1694,345 @@ function editarItem(it) {
     h('div', { class: 'btns' }, salvar, apagar));
 }
 
+// ---------- Funcionária da casa: cadastro, faltas, recibo e confirmação ----------
+const DSEM = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const isoD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const dataBR = (iso) => String(iso).slice(0, 10).split('-').reverse().join('/');
+const diaMesBR = (iso) => dataBR(iso).slice(0, 5);
+const DOMINIO_FUNC = '@casa.mutirao.app';
+
+function diasDeTrabalho(f, mes) {
+  const out = [], y = mes.getFullYear(), m = mes.getMonth();
+  for (let d = 1; d <= new Date(y, m + 1, 0).getDate(); d++) {
+    const dt = new Date(y, m, d);
+    if ((f.dias_semana || []).includes(dt.getDay())) out.push(isoD(dt));
+  }
+  return out;
+}
+/** Conta do mês: salário ÷ dias de trabalho do mês = valor do dia; cada falta não justificada desconta um dia. */
+function calcularRecibo(f, mes, faltas, adiant) {
+  const previstos = diasDeTrabalho(f, mes);
+  const devidos = previstos.filter((d) => d >= f.admissao && (!f.saida || d <= f.saida));
+  const salario = Number(f.salario);
+  const base = previstos.length ? num(salario * devidos.length / previstos.length) : 0;
+  const valorDia = previstos.length ? num(salario / previstos.length) : 0;
+  const nj = faltas.filter((x) => !x.justificada && devidos.includes(x.data)).map((x) => x.data).sort();
+  const js = faltas.filter((x) => x.justificada && devidos.includes(x.data)).map((x) => x.data).sort();
+  const desconto = num(valorDia * nj.length);
+  const ad = num(adiant || 0);
+  return { salario, dias_previstos: previstos.length, dias_devidos: devidos.length, base, valor_dia: valorDia,
+    faltas_datas: nj, justificadas_datas: js, desconto_faltas: desconto, adiantamentos: ad,
+    valor_pago: Math.max(0, num(base - desconto - ad)) };
+}
+/** Férias e 13º só como referência (meses com 15 dias ou mais contam). */
+function referenciaFeriasDecimo(f) {
+  const hoje = new Date(); const adm = new Date(f.admissao + 'T12:00:00'); const sal = Number(f.salario);
+  let meses13 = 0;
+  for (let m = 0; m <= hoje.getMonth(); m++) {
+    const ini = new Date(hoje.getFullYear(), m, 1), fim = m === hoje.getMonth() ? hoje : new Date(hoje.getFullYear(), m + 1, 0);
+    const de = adm > ini ? adm : ini;
+    if (fim >= de && (fim - de) / 86400000 + 1 >= 15) meses13++;
+  }
+  let anos = hoje.getFullYear() - adm.getFullYear();
+  if (new Date(hoje.getFullYear(), adm.getMonth(), adm.getDate()) > hoje) anos--;
+  anos = Math.max(0, anos);
+  const iniPer = new Date(adm.getFullYear() + anos, adm.getMonth(), adm.getDate());
+  const fimPer = new Date(adm.getFullYear() + anos + 1, adm.getMonth(), adm.getDate() - 1);
+  let mesesPer = (hoje.getFullYear() - iniPer.getFullYear()) * 12 + hoje.getMonth() - iniPer.getMonth();
+  if (hoje.getDate() - iniPer.getDate() >= 14) mesesPer++;
+  mesesPer = Math.min(12, Math.max(0, mesesPer));
+  return { meses13, decimo: num(sal / 12 * meses13), anos, iniPer: isoD(iniPer), fimPer: isoD(fimPer),
+    mesesPer, feriasProp: num(sal / 12 * mesesPer * 4 / 3), feriasCheia: num(sal * 4 / 3) };
+}
+
+/** Recibo (o mesmo para ela e para vocês). */
+function blocoRecibo(r, nome) {
+  const linha = (a, b, cls) => h('div', { class: 'lin' }, h('span', {}, a), h('span', { class: cls || '' }, b));
+  const mes = new Date(r.mes + 'T12:00:00');
+  return h('div', { class: 'card', style: 'gap:8px' },
+    h('div', { class: 'lin' }, h('b', {}, `Recibo · ${nomeMes(mes)}`), h('span', { class: 'nota' }, nome || '')),
+    linha('Salário', R(r.salario)),
+    r.dias_devidos < r.dias_previstos ? linha(`Proporcional (${r.dias_devidos} de ${r.dias_previstos} dias)`, R(r.base)) : null,
+    linha('Dias de trabalho no mês', String(r.dias_previstos)),
+    linha('Valor do dia', R(r.valor_dia)),
+    (r.faltas_datas || []).length
+      ? h('div', {}, linha(`Faltas sem justificativa (${r.faltas_datas.length})`, '− ' + R(r.desconto_faltas), 'ambar'),
+        h('div', { class: 'nota' }, r.faltas_datas.map(diaMesBR).join(', ')))
+      : linha('Faltas sem justificativa', 'nenhuma'),
+    (r.justificadas_datas || []).length ? h('div', { class: 'nota' }, `Faltas justificadas (não descontam): ${r.justificadas_datas.map(diaMesBR).join(', ')}`) : null,
+    Number(r.adiantamentos) ? h('div', {}, linha('Adiantamentos', '− ' + R(r.adiantamentos), 'ambar'),
+      r.adiantamentos_obs ? h('div', { class: 'nota' }, r.adiantamentos_obs) : null) : null,
+    h('div', { class: 'lin', style: 'border-top:1px solid var(--borda);padding-top:8px;font-size:18px' }, h('b', {}, 'Valor a receber'), h('b', {}, R(r.valor_pago))),
+    r.confirmado_em ? h('div', { class: 'nota', style: 'color:var(--receita);font-weight:700' }, `✓ Recebimento confirmado em ${dataCurta(r.confirmado_em)} às ${hora(r.confirmado_em)}`)
+      : r.enviado_em ? h('div', { class: 'nota' }, `Enviado em ${dataCurta(r.enviado_em)} às ${hora(r.enviado_em)} · aguardando confirmação`) : null);
+}
+
+async function abrirFuncionarias() {
+  const r = await sb.from('funcionarios').select('*').order('ativo', { ascending: false }).order('nome');
+  if (r.error) return toast('Não carregou: ' + erroMsg(r.error), 4000);
+  const ativas = r.data.filter((f) => f.ativo);
+  if (ativas.length === 1 && r.data.length === 1) return painelFuncionaria(ativas[0], inicioDoMes(new Date()));
+  abrirSheet(h('h3', {}, 'Funcionária'),
+    r.data.length ? r.data.map((f) => h('button', { class: 'item' + (f.ativo ? '' : ' prev'), onclick: () => painelFuncionaria(f, inicioDoMes(new Date())) },
+      h('div', { class: 'itemcorpo' }, h('div', { class: 't' }, h('span', { class: 'n' }, f.nome), h('span', { class: 'v' }, R(f.salario))),
+        h('div', { class: 'd' }, f.ativo ? `desde ${dataBR(f.admissao)} · paga dia ${f.dia_pagamento}` : `saiu em ${dataBR(f.saida)}`))))
+      : h('div', { class: 'vazio' }, 'Nenhuma funcionária cadastrada.'),
+    h('button', { class: 'btn', onclick: () => cadastroFuncionaria(null) }, '+ Cadastrar funcionária'));
+}
+
+async function cadastroFuncionaria(f) {
+  const novo = !f;
+  f = f || { nome: '', admissao: isoD(new Date()), salario: '', dia_pagamento: 5, dias_semana: [1, 2, 3, 4, 5], compromisso_id: null };
+  const cs = await sb.from('compromissos').select('id, nome, valor').eq('ativo', true).order('nome');
+  const lista = cs.data || [];
+  const sug = f.compromisso_id || (lista.find((c) => /funcion|domest|diarista|salário|salario/i.test(c.nome)) || {}).id;
+  const nome = h('input', { value: f.nome, placeholder: 'Nome dela', maxlength: '60' });
+  const adm = h('input', { type: 'date', value: f.admissao });
+  const sal = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: f.salario });
+  const dia = h('input', { type: 'number', inputmode: 'numeric', min: '1', max: '31', value: f.dia_pagamento });
+  const dias = new Set(f.dias_semana);
+  const chipsDias = h('div', { class: 'chips' }, [1, 2, 3, 4, 5, 6, 0].map((d) => {
+    const b = h('button', { class: 'chip' + (dias.has(d) ? ' on' : ''), type: 'button', 'aria-pressed': String(dias.has(d)) }, DSEM[d]);
+    b.onclick = () => { if (dias.has(d)) dias.delete(d); else dias.add(d); b.classList.toggle('on', dias.has(d)); b.setAttribute('aria-pressed', String(dias.has(d))); };
+    return b;
+  }));
+  const comp = h('select', {}, opcoes(lista.map((c) => [c.id, `${c.nome} · ${R(c.valor)}`]), sug, 'Nenhum'));
+  const salvar = h('button', { class: 'btn', onclick: async () => {
+    const v = Number(String(sal.value).replace(',', '.')), d = Number(dia.value);
+    if (nome.value.trim().length < 2) return toast('Escreva o nome dela.');
+    if (!adm.value) return toast('Informe a data em que ela começou.');
+    if (!(v > 0)) return toast('Informe o salário.');
+    if (!(d >= 1 && d <= 31)) return toast('Dia do pagamento: de 1 a 31.');
+    if (!dias.size) return toast('Marque os dias da semana em que ela trabalha.');
+    const dados = { nome: nome.value.trim(), admissao: adm.value, salario: v, dia_pagamento: d, dias_semana: [...dias].sort(), compromisso_id: comp.value ? Number(comp.value) : null };
+    salvar.disabled = true;
+    const r = novo ? await sb.from('funcionarios').insert(dados).select().single() : await sb.from('funcionarios').update(dados).eq('id', f.id).select().single();
+    if (r.error) { salvar.disabled = false; return toast('Não salvou: ' + erroMsg(r.error), 4000); }
+    toast('Salvo.'); painelFuncionaria(r.data, inicioDoMes(new Date()));
+  } }, 'Salvar');
+  abrirSheet(h('h3', {}, novo ? 'Cadastrar funcionária' : 'Editar cadastro'),
+    h('label', { class: 'campo' }, 'Nome', nome),
+    h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Começou em', adm), h('label', { class: 'campo' }, 'Salário (R$)', sal)),
+    h('label', { class: 'campo' }, 'Dia do pagamento', dia),
+    h('div', { class: 'campo' }, 'Dias da semana em que ela trabalha', chipsDias),
+    h('label', { class: 'campo' }, 'Compromisso mensal do salário (o recibo acerta o valor previsto do mês)', comp),
+    h('div', { class: 'btns' }, salvar, novo ? null : h('button', { class: 'btn sec', onclick: () => painelFuncionaria(f, inicioDoMes(new Date())) }, 'Voltar')));
+}
+
+async function painelFuncionaria(f, mes) {
+  const ini = isoD(mes), fim = isoD(new Date(mes.getFullYear(), mes.getMonth() + 1, 0));
+  const [fr, rr] = await Promise.all([
+    sb.from('faltas').select('*').eq('funcionario_id', f.id).gte('data', ini).lte('data', fim),
+    sb.from('recibos').select('*').eq('funcionario_id', f.id).eq('mes', ini).maybeSingle(),
+  ]);
+  if (fr.error || rr.error) return toast('Não carregou: ' + erroMsg(fr.error || rr.error), 4000);
+  const faltas = fr.data; const recibo = rr.data;
+  const adiant = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: recibo ? recibo.adiantamentos : '', placeholder: '0,00' });
+  const adiantObs = h('input', { value: recibo && recibo.adiantamentos_obs || '', placeholder: 'ex.: vale dia 12', maxlength: '80' });
+  const resumo = h('div');
+  const conta = () => calcularRecibo(f, mes, faltas, Number(String(adiant.value || 0).replace(',', '.')));
+  const mudou = (c) => recibo && recibo.enviado_em && (num(recibo.valor_pago) !== c.valor_pago || (recibo.faltas_datas || []).join() !== c.faltas_datas.join());
+  const desenharResumo = () => {
+    const c = conta();
+    const rec = { ...c, mes: ini, adiantamentos_obs: adiantObs.value.trim(), enviado_em: recibo && !mudou(c) ? recibo.enviado_em : null,
+      confirmado_em: recibo && !mudou(c) ? recibo.confirmado_em : null };
+    resumo.replaceChildren(...[blocoRecibo(rec, f.nome),
+      mudou(c) ? h('div', { class: 'nota', style: 'color:var(--ambar);font-weight:700' }, 'Mudou depois de enviado. Envie de novo para ela confirmar o valor certo.') : null].filter(Boolean));
+  };
+  adiant.oninput = desenharResumo; adiantObs.oninput = desenharResumo;
+
+  // Calendário do mês: toque num dia de trabalho -> falta sem justificativa -> justificada -> trabalhou
+  const trabalho = new Set(diasDeTrabalho(f, mes));
+  const cal = h('div', { style: 'display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center' },
+    DSEM.map((d) => h('span', { class: 'nota', style: 'font-weight:700' }, d.slice(0, 1))));
+  for (let i = 0; i < mes.getDay(); i++) cal.append(h('span'));
+  const hojeIso = isoD(new Date());
+  for (let d = 1; d <= new Date(mes.getFullYear(), mes.getMonth() + 1, 0).getDate(); d++) {
+    const iso = isoD(new Date(mes.getFullYear(), mes.getMonth(), d));
+    const fora = iso < f.admissao || (f.saida && iso > f.saida);
+    if (!trabalho.has(iso) || fora) { cal.append(h('span', { style: 'padding:9px 0;color:var(--suave);opacity:.5' }, String(d))); continue; }
+    const b = h('button', { type: 'button', style: 'min-height:42px;border-radius:10px;border:1.5px solid transparent;font:700 15px Manrope,sans-serif' });
+    const pintar = () => {
+      const x = faltas.find((y) => y.data === iso);
+      b.textContent = x ? (x.justificada ? `${d} J` : `${d} F`) : String(d);
+      b.style.background = x ? (x.justificada ? '#E7EAE9' : 'var(--ambar-fundo)') : 'var(--verde-claro)';
+      b.style.borderColor = x && !x.justificada ? 'var(--laranja)' : (iso === hojeIso ? 'var(--verde)' : 'transparent');
+      b.style.color = x && !x.justificada ? 'var(--ambar)' : 'var(--texto)';
+      b.setAttribute('aria-label', `${dataBR(iso)}: ${x ? (x.justificada ? 'falta justificada' : 'falta sem justificativa') : 'trabalhou'}`);
+    };
+    b.onclick = async () => {
+      const x = faltas.find((y) => y.data === iso);
+      b.disabled = true;
+      let r;
+      if (!x) r = await sb.from('faltas').insert({ funcionario_id: f.id, data: iso, justificada: false }).select().single();
+      else if (!x.justificada) r = await sb.from('faltas').update({ justificada: true }).eq('id', x.id).select().single();
+      else r = await sb.from('faltas').delete().eq('id', x.id);
+      b.disabled = false;
+      if (r.error) return toast('Não salvou: ' + erroMsg(r.error), 4000);
+      const i = faltas.findIndex((y) => y.data === iso);
+      if (i >= 0) faltas.splice(i, 1);
+      if (r.data) faltas.push(r.data);
+      pintar(); desenharResumo();
+    };
+    pintar(); cal.append(b);
+  }
+
+  const enviar = h('button', { class: 'btn', onclick: async () => {
+    const c = conta();
+    enviar.disabled = true;
+    const dados = { funcionario_id: f.id, mes: ini, ...c, adiantamentos_obs: adiantObs.value.trim() || null };
+    const r = await sb.from('recibos').upsert(dados, { onConflict: 'funcionario_id,mes' }).select().single();
+    if (r.error) { enviar.disabled = false; return toast('Não salvou: ' + erroMsg(r.error), 4000); }
+    const e = await sb.rpc('enviar_recibo', { p_id: r.data.id });
+    if (e.error) { enviar.disabled = false; return toast('Não enviou: ' + erroMsg(e.error), 4000); }
+    toast(f.user_id ? `Recibo enviado. ${f.nome.split(' ')[0]} recebe o aviso para confirmar.` : 'Recibo salvo. Ela ainda não tem acesso ao app para confirmar.', 4500);
+    painelFuncionaria(f, mes);
+  } }, recibo && recibo.enviado_em ? 'Enviar de novo' : `Enviar recibo para ${f.nome.split(' ')[0]}`);
+
+  const ref = referenciaFeriasDecimo(f);
+  const primeiro = f.nome.split(' ')[0];
+  abrirSheet(
+    h('h3', {}, f.nome),
+    h('div', { class: 'nota' }, `Desde ${dataBR(f.admissao)} · ${R(f.salario)} · paga dia ${f.dia_pagamento} · ${[1, 2, 3, 4, 5, 6, 0].filter((d) => f.dias_semana.includes(d)).map((d) => DSEM[d]).join(', ')}`
+      + (f.ativo ? '' : ` · saiu em ${dataBR(f.saida)}`)),
+    h('div', { class: 'lin', style: 'align-items:center' },
+      h('button', { class: 'btn sec', style: 'min-height:40px;min-width:44px', 'aria-label': 'Mês anterior', onclick: () => painelFuncionaria(f, addMes(mes, -1)) }, '‹'),
+      h('b', {}, nomeMes(mes)),
+      h('button', { class: 'btn sec', style: 'min-height:40px;min-width:44px', 'aria-label': 'Próximo mês', onclick: () => painelFuncionaria(f, addMes(mes, 1)) }, '›')),
+    h('div', { class: 'card', style: 'gap:8px' }, cal,
+      h('div', { class: 'nota' }, 'Toque no dia: 1 vez = falta sem justificativa (F, desconta) · 2 vezes = justificada (J, não desconta) · 3 vezes = trabalhou.')),
+    resumo,
+    h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Adiantamentos (R$)', adiant), h('label', { class: 'campo' }, 'Sobre o adiantamento', adiantObs)),
+    f.ativo ? enviar : null,
+    h('div', { class: 'card', style: 'gap:6px;background:var(--verde-claro)' },
+      h('b', {}, 'Referência: 13º e férias'),
+      h('div', { class: 'lin' }, h('span', {}, `13º de ${new Date().getFullYear()} até agora (${ref.meses13}/12)`), h('span', {}, R(ref.decimo))),
+      h('div', { class: 'lin' }, h('span', {}, `Férias proporcionais (${ref.mesesPer}/12, com 1/3)`), h('span', {}, R(ref.feriasProp))),
+      h('div', { class: 'nota' }, `Período de férias atual: ${dataBR(ref.iniPer)} a ${dataBR(ref.fimPer)}. Ao completar, são 30 dias com salário + 1/3 = ${R(ref.feriasCheia)}.`
+        + (ref.anos >= 1 ? ` Ela já tem ${ref.anos} ${ref.anos === 1 ? 'ano' : 'anos'} de casa.` : '') + ' Conta de referência; meses com 15 dias ou mais contam.')),
+    h('div', { class: 'btns' },
+      h('button', { class: 'btn sec', onclick: () => acessoFuncionaria(f) }, f.user_id ? 'Acesso ao app' : `Dar acesso a ${primeiro}`),
+      h('button', { class: 'btn sec', onclick: () => cadastroFuncionaria(f) }, 'Editar cadastro')),
+    f.ativo ? h('button', { class: 'btn perigo', onclick: () => encerrarFuncionaria(f) }, 'Saída da funcionária') : null);
+  desenharResumo();
+}
+
+async function chamarFuncionaria(corpo) {
+  const { data: s } = await sb.auth.getSession();
+  const r = await fetch(SB_URL + '/functions/v1/funcionaria', { method: 'POST',
+    headers: { 'content-type': 'application/json', apikey: SB_KEY, authorization: 'Bearer ' + s.session.access_token }, body: JSON.stringify(corpo) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.erro) throw new Error(j.erro || 'Não deu certo.');
+  return j;
+}
+const pinNovo = () => String(Math.floor(100000 + Math.random() * 900000));
+const instrucaoAcesso = (usuario, pin) => h('div', { class: 'card', style: 'gap:6px' },
+  h('b', {}, 'No celular dela'),
+  h('div', {}, '1. Abra no navegador: ', h('b', {}, 'atacadolima.github.io/gastos-familia')),
+  h('div', {}, '2. Usuário: ', h('b', {}, usuario), ' · Senha: ', h('b', {}, pin)),
+  h('div', {}, '3. Menu do navegador → "Adicionar à tela de início". Depois abra pelo ícone e toque em "Ativar avisos".'),
+  h('div', { class: 'nota' }, 'Anote a senha: ela não aparece de novo. Se esquecer, é só trocar aqui.'));
+
+function acessoFuncionaria(f) {
+  const voltar = h('button', { class: 'btn sec', onclick: () => painelFuncionaria(f, inicioDoMes(new Date())) }, 'Voltar');
+  if (!f.user_id) {
+    const usuario = h('input', { value: f.nome.split(' ')[0].toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9.]/g, ''), autocapitalize: 'off', maxlength: '30' });
+    const pin = h('input', { value: pinNovo(), inputmode: 'numeric', maxlength: '6' });
+    const msg = h('div', { class: 'erro', role: 'alert' });
+    const criar = h('button', { class: 'btn', onclick: async () => {
+      criar.disabled = true; msg.textContent = '';
+      try {
+        const j = await chamarFuncionaria({ acao: 'criar', funcionario_id: f.id, usuario: usuario.value, pin: pin.value.trim() });
+        f.user_id = 'ok'; f.usuario = j.usuario;
+        abrirSheet(h('h3', {}, 'Acesso criado'), instrucaoAcesso(j.usuario, pin.value.trim()), voltar);
+      } catch (e) { msg.textContent = e.message; criar.disabled = false; }
+    } }, 'Criar acesso');
+    return abrirSheet(h('h3', {}, `Acesso de ${f.nome.split(' ')[0]}`),
+      h('div', { class: 'nota' }, 'Ela entra só com usuário e senha de 6 números, sem e-mail. Vê apenas a lista de compras e os recibos dela.'),
+      h('label', { class: 'campo' }, 'Usuário', usuario), h('label', { class: 'campo' }, 'Senha (6 números)', pin), msg, h('div', { class: 'btns' }, criar, voltar));
+  }
+  const pin = h('input', { value: pinNovo(), inputmode: 'numeric', maxlength: '6' });
+  const msg = h('div', { class: 'erro', role: 'alert' });
+  const trocar = h('button', { class: 'btn', onclick: async () => {
+    trocar.disabled = true; msg.textContent = '';
+    try { await chamarFuncionaria({ acao: 'pin', funcionario_id: f.id, pin: pin.value.trim() });
+      abrirSheet(h('h3', {}, 'Senha trocada'), instrucaoAcesso(f.usuario, pin.value.trim()), voltar);
+    } catch (e) { msg.textContent = e.message; trocar.disabled = false; }
+  } }, 'Trocar senha');
+  abrirSheet(h('h3', {}, `Acesso de ${f.nome.split(' ')[0]}`),
+    h('div', { class: 'card' }, h('div', {}, 'Usuário: ', h('b', {}, f.usuario || '—')), h('div', { class: 'nota' }, 'Ela vê a lista de compras e os recibos dela. Nada dos gastos da família.')),
+    h('label', { class: 'campo' }, 'Nova senha (6 números)', pin), msg, h('div', { class: 'btns' }, trocar, voltar));
+}
+
+function encerrarFuncionaria(f) {
+  const saida = h('input', { type: 'date', value: isoD(new Date()) });
+  const msg = h('div', { class: 'erro', role: 'alert' });
+  let conf = false;
+  const ok = h('button', { class: 'btn perigo', onclick: async () => {
+    if (!conf) { conf = true; ok.textContent = 'Toque de novo para confirmar'; return; }
+    ok.disabled = true;
+    try {
+      await chamarFuncionaria({ acao: 'encerrar', funcionario_id: f.id, saida: saida.value });
+      f.ativo = false; f.saida = saida.value;
+      toast('Acesso encerrado. O histórico continua guardado.', 4000);
+      painelFuncionaria(f, inicioDoMes(new Date(saida.value + 'T12:00:00')));
+    } catch (e) { msg.textContent = e.message; ok.disabled = false; }
+  } }, 'Encerrar acesso');
+  abrirSheet(h('h3', {}, `Saída de ${f.nome.split(' ')[0]}`),
+    h('label', { class: 'campo' }, 'Último dia de trabalho', saida),
+    h('div', { class: 'nota' }, 'O login dela para de funcionar na hora. Recibos, faltas e confirmações ficam guardados. O recibo do último mês sai proporcional até esse dia.'),
+    msg, h('div', { class: 'btns' }, ok, h('button', { class: 'btn sec', onclick: () => painelFuncionaria(f, inicioDoMes(new Date())) }, 'Voltar')));
+}
+
+/** Parte dela na tela simples: recibo para confirmar + histórico. */
+async function recibosDaFuncionaria(corpo) {
+  const fr = await sb.from('funcionarios').select('id, nome').eq('user_id', st.eu).maybeSingle();
+  if (!fr.data) return;
+  const rr = await sb.from('recibos').select('*').eq('funcionario_id', fr.data.id).not('enviado_em', 'is', null).order('mes', { ascending: false }).limit(12);
+  const lista = rr.data || [];
+  const pend = lista.filter((r) => !r.confirmado_em);
+  const topo = h('div', { style: 'display:flex;flex-direction:column;gap:12px' });
+  for (const r of pend) {
+    const b = h('button', { class: 'btn', style: 'min-height:56px;font-size:18px', onclick: async () => {
+      b.disabled = true;
+      const x = await sb.rpc('confirmar_recibo', { p_id: r.id });
+      if (x.error) { b.disabled = false; return toast('Não deu: ' + erroMsg(x.error), 4000); }
+      toast('Obrigado! Recebimento confirmado.', 3500); telaComprasSimples();
+    } }, '✓ Recebi');
+    topo.append(h('div', { class: 'card', style: 'gap:10px;border:2px solid var(--verde)' }, h('b', { style: 'font-size:17px' }, 'Confira seu recibo'), blocoRecibo(r), b));
+  }
+  corpo.prepend(topo);
+  const feitos = lista.filter((r) => r.confirmado_em);
+  if (feitos.length) {
+    corpo.insertBefore(h('div', { class: 'card', style: 'gap:0;padding:6px 14px' }, h('div', { class: 'dia', style: 'padding:8px 0 2px' }, 'Meus recibos'),
+      feitos.map((r) => h('button', { class: 'item', style: 'border:none;border-bottom:1px solid #EEF0ED;border-radius:0;padding:10px 0', onclick: () => abrirSheet(blocoRecibo(r)) },
+        h('div', { class: 'itemcorpo' }, h('div', { class: 't' }, h('span', { class: 'n' }, nomeMes(new Date(r.mes + 'T12:00:00'))), h('span', { class: 'v' }, R(r.valor_pago))),
+          h('div', { class: 'd', style: 'color:var(--receita)' }, `✓ confirmado em ${dataCurta(r.confirmado_em)}`))))), corpo.lastElementChild);
+  }
+}
+
 // ---------- login ----------
 function telaLogin(msg) {
-  const email = h('input', { type: 'email', autocomplete: 'username', required: true });
+  const email = h('input', { type: 'text', inputmode: 'email', autocapitalize: 'off', autocorrect: 'off', autocomplete: 'username', required: true });
   const senha = h('input', { type: 'password', autocomplete: 'current-password', required: true });
   const erro = h('div', { class: 'erro', role: 'alert' }, msg || '');
   const entrar = h('button', { class: 'btn', type: 'submit' }, 'Entrar');
   const form = h('form', { class: 'login', onsubmit: async (e) => {
     e.preventDefault(); entrar.disabled = true; erro.textContent = '';
-    const r = await sb.auth.signInWithPassword({ email: email.value.trim(), password: senha.value });
+    const u = email.value.trim().toLowerCase();
+    const r = await sb.auth.signInWithPassword({ email: u.includes('@') ? u : u + DOMINIO_FUNC, password: senha.value });
     entrar.disabled = false;
-    if (r.error) erro.textContent = 'E-mail ou senha incorretos.';
+    if (r.error) erro.textContent = 'Usuário/e-mail ou senha incorretos.';
     else iniciar();
   } },
     h('img', { class: 'logo', src: 'icons/icon-192.png', alt: '' }),
     h('h1', {}, 'Mutirão'),
     h('p', { class: 'lema' }, 'Juntos, a conta fecha.'),
-    h('label', { class: 'campo' }, 'E-mail', email),
+    h('label', { class: 'campo' }, 'E-mail ou usuário', email),
     h('label', { class: 'campo' }, 'Senha', senha),
     erro, entrar,
     h('button', { class: 'btn sec', type: 'button', onclick: async () => {
-      if (!email.value.trim()) { erro.textContent = 'Escreva seu e-mail primeiro.'; return; }
+      if (!email.value.includes('@')) { erro.textContent = 'Escreva seu e-mail primeiro. Quem entra com usuário pede a senha nova ao Daniel.'; return; }
       await sb.auth.resetPasswordForEmail(email.value.trim(), { redirectTo: location.origin + location.pathname });
       erro.textContent = 'Se o e-mail estiver cadastrado, chega um link para criar uma senha nova.';
     } }, 'Esqueci a senha'));
@@ -1767,13 +2088,13 @@ async function ativarAvisos() {
     || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64url(vapid) });
   await salvarInscricao(sub);
 }
-function cartaoAvisos(corpo) {
+function cartaoAvisos(corpo, texto) {
   if (!pushOk() || Notification.permission === 'denied') return;
   try { if (localStorage.getItem('avisos-dispensado')) return; } catch {}
   const msg = h('div', { class: 'nota' });
   const card = h('div', { class: 'card', style: 'background:var(--verde-claro)' },
     h('h2', {}, 'Avisos no celular'),
-    h('div', { class: 'nota', style: 'color:var(--texto)' }, 'Avisa quando alguém põe itens na lista de compras e no dia de vencimento dos compromissos. Nada além disso.'),
+    h('div', { class: 'nota', style: 'color:var(--texto)' }, texto || 'Avisa quando alguém põe itens na lista de compras e no dia de vencimento dos compromissos. Nada além disso.'),
     msg,
     h('div', { style: 'display:flex;gap:8px' },
       h('button', { class: 'btn', style: 'flex:1', onclick: async (e) => {
