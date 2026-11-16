@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v26';
+const VERSAO_TELAS = 'v27';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -127,7 +127,7 @@ async function carregarMes() {
   st.carregando = true;
   const de = st.mes.toISOString(), ate = addMes(st.mes, 1).toISOString();
   const { data, error } = await sb.from('lancamentos')
-    .select('*, partes(*), abastecimentos(*)')
+    .select('*, partes(*), abastecimentos(*), comprovantes(id)')
     .gte('data_hora', de).lt('data_hora', ate)
     .order('data_hora', { ascending: false });
   st.carregando = false;
@@ -241,7 +241,7 @@ function navegacao() {
     svg.setAttribute('aria-hidden', 'true');
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', ICONES[id]); svg.append(p);
     nav.append(h('button', { class: st.aba === id ? 'on' : '', 'aria-current': st.aba === id ? 'page' : null,
-      onclick: () => { st.aba = id; st.filtroCat = null; st.analiseCat = null; st.analiseFin = null; render(); window.scrollTo(0, 0); } }, svg, rot));
+      onclick: () => { st.aba = id; st.filtroCat = null; st.analiseCat = null; st.analiseFin = null; st.analiseIR = null; render(); window.scrollTo(0, 0); } }, svg, rot));
   }
   return nav;
 }
@@ -284,7 +284,7 @@ async function telaInicio(wrap) {
   const corpo = h('div', { class: 'corpo' });
   wrap.append(corpo);
   // App do Android desatualizado: oferece atualizar (o número sobe a cada APK publicado)
-  const APK_ATUAL = 8;
+  const APK_ATUAL = 9;
   let vInst = 0;
   try { vInst = window.GastosAndroid && window.GastosAndroid.versao ? Number(window.GastosAndroid.versao()) : 0; } catch {}
   if (vInst && vInst < APK_ATUAL) {
@@ -461,6 +461,7 @@ function itemLanc(l) {
   else if (l.previsto && l.compromisso_id) tags.push(h('span', { class: 'tag' }, `compromisso · vence dia ${dataCurta(l.data_hora)}`));
   else if (l.previsto) tags.push(h('span', { class: 'tag' }, l.serie && l.serie.startsWith('rec:') ? 'previsto · assinatura' : 'previsto'));
   if (!l.previsto && l.compromisso_id) tags.push(h('span', { class: 'tag ok' }, 'compromisso pago'));
+  if (l.ded_tipo) tags.push(h('span', { class: 'tag ir' }, `IR · ${NOME_IR[l.ded_tipo]}${(l.comprovantes || []).length ? ' · 📎' : ' · sem nota'}`));
   else if (l.conferido) tags.push(h('span', { class: 'tag ok' }, l.aviso_id ? 'aviso + banco' : 'banco'));
   else if (l.origem === 'aviso') tags.push(h('span', { class: 'tag amb' }, 'só aviso'));
   if (l.total_parcelas > 1) tags.push(h('span', { class: 'tag' }, `parcela ${l.parcela}/${l.total_parcelas}`));
@@ -555,8 +556,57 @@ function abrirLanc(l) {
   const blocoComb = h('div', { class: 'card' }, h('h2', {}, 'Abastecimento'),
     h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Km no painel', km), h('label', { class: 'campo' }, 'Litros', litros)),
     h('label', { class: 'check' }, cheio, 'Enchi o tanque'));
+  // ---- Imposto de Renda: dedutível + comprovantes ----
+  const sugereIR = sugestaoIR(l);
+  const dedChk = h('input', { type: 'checkbox', checked: !!l.ded_tipo });
+  const dedTipo = h('select', {}, opcoes(TIPOS_IR, l.ded_tipo || sugereIR || 'saude'));
+  const pessoasIR = st.cad.pessoas.filter((p) => p.id !== 'outros' && p.id !== 'familia');
+  const dedPes = h('select', {}, opcoes(pessoasIR.map((p) => [p.id, p.nome]), l.ded_pessoa || (pessoasIR.some((p) => p.id === l.pessoa_id) ? l.pessoa_id : 'daniel')));
+  const dedPrest = h('input', { value: l.ded_prestador || '', placeholder: 'ex.: Dra. Ana / Clínica X / Escola Y', maxlength: '80' });
+  const dedDoc = h('input', { value: l.ded_doc || '', placeholder: 'CPF ou CNPJ', inputmode: 'numeric', maxlength: '20' });
+  const dedCampos = h('div', { class: 'ded-campos' },
+    h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'Tipo', dedTipo), h('label', { class: 'campo' }, 'Para quem', dedPes)),
+    h('label', { class: 'campo' }, 'Quem recebeu (médico, clínica, escola)', dedPrest),
+    h('label', { class: 'campo' }, 'CPF/CNPJ de quem recebeu', dedDoc));
+  dedCampos.hidden = !dedChk.checked;
+  dedChk.onchange = () => { dedCampos.hidden = !dedChk.checked; };
+  const listaAnexos = h('div', { class: 'anexos' });
+  const recarregarAnexos = async () => {
+    const r = await sb.from('comprovantes').select('*').eq('lancamento_id', l.id).order('id');
+    listaAnexos.replaceChildren(...(r.data || []).map((c) => h('div', { class: 'anexo' },
+      h('button', { class: 'anexo-nome', onclick: () => abrirComprovante(c.caminho) }, `📎 ${c.nome || 'comprovante'}`),
+      h('button', { class: 'anexo-x', 'aria-label': 'Apagar comprovante', onclick: async () => {
+        await sb.storage.from('comprovantes').remove([c.caminho]); await sb.from('comprovantes').delete().eq('id', c.id); recarregarAnexos(); } }, '✕'))));
+  };
+  const arquivo = h('input', { type: 'file', accept: 'image/*,application/pdf', hidden: true });
+  arquivo.onchange = async () => {
+    for (const f of arquivo.files) {
+      const caminho = `${l.id}/${Date.now()}-${f.name.normalize('NFD').replace(/[^\w.-]+/g, '_').slice(-60)}`;
+      toast('Enviando comprovante…');
+      const up = await sb.storage.from('comprovantes').upload(caminho, f, { contentType: f.type || 'application/octet-stream' });
+      if (up.error) { toast('Não enviou: ' + erroMsg(up.error), 4000); continue; }
+      await sb.from('comprovantes').insert({ lancamento_id: l.id, caminho, nome: f.name, tipo: f.type });
+    }
+    arquivo.value = ''; recarregarAnexos(); toast('Comprovante anexado.');
+  };
+  const blocoIR = h('div', { class: 'card', style: 'gap:8px' }, h('h2', {}, 'Imposto de Renda'),
+    sugereIR && !l.ded_tipo ? h('div', { class: 'nota', style: 'color:var(--ambar);font-weight:700' }, 'Pode ser dedutível no IR. Quer marcar e anexar a nota?') : null,
+    h('label', { class: 'check' }, dedChk, 'Dedutível no Imposto de Renda'), dedCampos, listaAnexos,
+    h('button', { class: 'btn sec', type: 'button', onclick: () => arquivo.click() }, 'Anexar comprovante (foto ou PDF)'), arquivo);
+  recarregarAnexos();
+  if (!l.ded_doc && l.transacao_banco_id) {
+    // Pix/boleto: o banco às vezes informa quem recebeu (nome e CPF/CNPJ)
+    sb.from('transacoes_banco').select('bruto').eq('id', l.transacao_banco_id).maybeSingle().then(({ data }) => {
+      const rc = data && data.bruto && data.bruto.paymentData && data.bruto.paymentData.receiver;
+      const doc = rc && rc.documentNumber && rc.documentNumber.value;
+      if (doc && !dedDoc.value && String(doc).replace(/\D/g, '') !== '00754419690') dedDoc.value = doc;
+      if (rc && rc.name && !dedPrest.value) dedPrest.value = rc.name;
+    });
+  }
+
   const mostrar = () => {
     const ehGasto = comoSel.value === 'Gasto';
+    blocoIR.hidden = !ehGasto;
     blocoNova.hidden = !ehGasto || catSel.value !== '__nova';
     if (!blocoNova.hidden) setTimeout(() => novaCat.focus(), 50);
     catSel.parentElement.hidden = !ehGasto;
@@ -585,6 +635,10 @@ function abrirLanc(l) {
       }
       const upd = { caixinha_id: cxId, resgate: comoSel.value === 'Investimento' && resgate.checked, descricao: nome.value.trim() || l.descricao, conta_como: comoSel.value, pessoa_id: porCat ? l.pessoa_id : sel[0], observacao: obs.value.trim() || null,
         categoria_id: comoSel.value === 'Gasto' && catSel.value && catSel.value !== '__nova' ? Number(catSel.value) : null, atualizado_em: new Date().toISOString() };
+      const ehDed = comoSel.value === 'Gasto' && dedChk.checked;
+      const ded = { ded_tipo: ehDed ? dedTipo.value : null, ded_pessoa: ehDed ? dedPes.value : null,
+        ded_prestador: ehDed ? (dedPrest.value.trim() || null) : null, ded_doc: ehDed ? (dedDoc.value.trim() || null) : null };
+      Object.assign(upd, ded);
       const r = await sb.from('lancamentos').update(upd).eq('id', l.id);
       if (r.error) throw r.error;
       if (!porCat) {
@@ -614,7 +668,8 @@ function abrirLanc(l) {
       }
       // Mesma compra parcelada / mesma assinatura: aplica em toda a série
       let daSerie = 0;
-      if (l.serie) { const rs = await sb.rpc('aplicar_serie', { p_id: l.id }); if (!rs.error) daSerie = rs.data || 0; }
+      if (l.serie) { const rs = await sb.rpc('aplicar_serie', { p_id: l.id }); if (!rs.error) daSerie = rs.data || 0;
+        await sb.from('lancamentos').update(ded).eq('serie', l.serie); }
       fecharSheet();
       await carregarCaixinhas(); await carregarMes(); render();
       const msgs = [];
@@ -646,6 +701,7 @@ function abrirLanc(l) {
     porCat ? h('div', { class: 'nota' }, 'Quem gastou está definido em cada parte da divisão.') : blocoQuem,
     blocoComb,
     h('label', { class: 'campo' }, 'Observação', obs),
+    blocoIR,
     porCat ? h('div', { class: 'card', style: 'gap:6px' }, h('h2', {}, `Dividido em ${ps.length} partes`),
       ps.map((p) => h('div', { class: 'lin' }, h('span', {}, `${nomeCat(p.categoria_id)} · ${nomePessoa(p.pessoa_id || l.pessoa_id)}`), h('span', { class: 'v' }, R(p.valor))))) : null,
     h('div', { class: 'btns' }, salvar,
@@ -906,6 +962,7 @@ function porcoesAnalise(lancs, comPrevisto) {
 
 async function telaAnalise(wrap) {
   const { lancs, inicio } = await dadosAnalise();
+  if (st.analiseIR) return telaIR(wrap);
   if (st.analiseFin) return telaFinanciamento(wrap);
   if (st.analiseCat) return telaAnaliseCategoria(wrap, lancs, inicio);
   const hoje = new Date();
@@ -1008,10 +1065,131 @@ async function telaAnalise(wrap) {
     corpo.append(cf);
   }
 
+  // Imposto de Renda (só aparece se algo foi marcado como dedutível no ano)
+  try {
+    const anoIR = st.mes.getFullYear(), itensIR = await dadosIR(anoIR);
+    if (itensIR.length) {
+      const tot = itensIR.reduce((s, x) => s + Number(x.valor), 0), sem = itensIR.filter((x) => !(x.comprovantes || []).length).length;
+      corpo.append(h('button', { class: 'card fin-mini', onclick: () => { st.analiseIR = anoIR; render(); window.scrollTo(0, 0); } },
+        h('div', { class: 'lin' }, h('h2', {}, `Imposto de Renda ${anoIR}`), h('span', { class: 'v' }, R(tot))),
+        h('div', { class: 'nota' }, `${itensIR.length} gasto(s) dedutível(is)${sem ? ` · ${sem} sem comprovante` : ' · todos com comprovante'} · toque para ver`)));
+    }
+  } catch {}
+
   // 5) Planilha
   const btnPl = h('button', { class: 'btn sec', onclick: () => baixarPlanilha(btnPl) }, 'Baixar planilha (Excel)');
   corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Planilha'), btnPl,
     h('div', { class: 'nota' }, 'Todos os lançamentos (desde o início) com data, data da compra, categoria, pessoa, banco, valor, observação e partes da divisão. Para analisar no computador.')));
+}
+
+// ----- Imposto de Renda -----
+const TIPOS_IR = [['saude', 'Saúde (médico, dentista, exames, plano)'], ['educacao', 'Educação (escola, faculdade)'], ['previdencia', 'Previdência PGBL']];
+const NOME_IR = { saude: 'saúde', educacao: 'educação', previdencia: 'previdência' };
+/** Sugere "pode ser dedutível" (farmácia não entra: remédio de farmácia não é dedutível). */
+function sugestaoIR(l) {
+  if (l.conta_como !== 'Gasto') return null;
+  const c = nomeCat(l.categoria_id) || '', d = (l.descricao || '').toLowerCase();
+  if (/drog|farm[aá]c|raia|pacheco|pague menos|panvel|ara[uú]jo|venancio/.test(d)) return null;
+  if (/educa/i.test(c) || /escola|col[eé]gio|faculdade|universidade|creche|ber[cç][aá]rio/.test(d)) return 'educacao';
+  if (/m[eé]dic|cl[ií]nic|odonto|dentist|psic[oó]|hospital|laborat|exame|unimed|amil|hapvida|sulam[eé]rica|bradesco sa[uú]de|fisioter|fonoaud|nutricion|terapia|ortodon/.test(d)) return 'saude';
+  if (/sa[uú]de/i.test(c)) return 'saude';
+  return null;
+}
+async function abrirComprovante(caminho) {
+  const r = await sb.storage.from('comprovantes').createSignedUrl(caminho, 600);
+  if (r.error) return toast('Não abriu: ' + erroMsg(r.error), 4000);
+  if (window.GastosAndroid) location.href = r.data.signedUrl; else window.open(r.data.signedUrl, '_blank');
+}
+/** Entrega um arquivo gerado: no Android abre um link temporário no navegador; no resto, baixa direto. */
+async function entregarArquivo(blob, nome) {
+  if (window.GastosAndroid) {
+    const caminho = `${st.eu}/${Date.now()}-${nome}`;
+    const up = await sb.storage.from('planilhas').upload(caminho, blob, { contentType: blob.type });
+    if (up.error) throw up.error;
+    const lk = await sb.storage.from('planilhas').createSignedUrl(caminho, 600, { download: nome });
+    if (lk.error) throw lk.error;
+    location.href = lk.data.signedUrl;
+  } else {
+    const a = h('a', { href: URL.createObjectURL(blob), download: nome }); document.body.append(a); a.click(); a.remove();
+  }
+}
+async function carregarXLSX() {
+  if (!window.XLSX) await new Promise((ok, erro) => { const sc = document.createElement('script'); sc.src = 'vendor/xlsx-0.18.5.min.js'; sc.onload = ok; sc.onerror = () => erro(new Error('não carregou o gerador')); document.head.append(sc); });
+}
+async function dadosIR(ano) {
+  const de = new Date(ano, 0, 1).toISOString(), ate = new Date(ano + 1, 0, 1).toISOString();
+  const r = await sb.from('lancamentos').select('id, data_hora, valor, descricao, ded_tipo, ded_pessoa, ded_prestador, ded_doc, comprovantes(id, caminho, nome)')
+    .not('ded_tipo', 'is', null).eq('previsto', false).gte('data_hora', de).lt('data_hora', ate).order('data_hora');
+  if (r.error) throw r.error;
+  return r.data;
+}
+
+async function telaIR(wrap) {
+  const ano = st.analiseIR;
+  wrap.append(h('div', { class: 'cab' },
+    h('button', { class: 'voltar', onclick: () => { st.analiseIR = null; render(); } }, '‹ Análise'),
+    h('div', { class: 'mes' }, h('button', { 'aria-label': 'Ano anterior', onclick: () => { st.analiseIR--; render(); } }, '‹'),
+      h('h1', { style: 'flex:1;text-align:center' }, `Imposto de Renda ${ano}`), h('button', { 'aria-label': 'Próximo ano', onclick: () => { st.analiseIR++; render(); } }, '›')),
+    h('span', { class: 'sub' }, `Gastos dedutíveis de ${ano} (declaração de ${ano + 1})`)));
+  const corpo = h('div', { class: 'corpo' });
+  wrap.append(corpo);
+  const itens = await dadosIR(ano);
+  const pessoasIR = st.cad.pessoas.filter((p) => p.id !== 'outros' && p.id !== 'familia');
+  const resumo = h('div', { class: 'card' }, h('h2', {}, 'Resumo'));
+  if (!itens.length) resumo.append(h('div', { class: 'vazio' }, 'Nada marcado como dedutível neste ano. Abra um gasto (médico, escola…) e marque "Dedutível no Imposto de Renda".'));
+  for (const [t, nomeT] of TIPOS_IR) {
+    const doTipo = itens.filter((x) => x.ded_tipo === t);
+    if (!doTipo.length) continue;
+    resumo.append(h('div', { class: 'lin' }, h('b', {}, nomeT.split(' (')[0]), h('b', {}, R(doTipo.reduce((s, x) => s + Number(x.valor), 0)))));
+    for (const p of pessoasIR) {
+      const v = doTipo.filter((x) => x.ded_pessoa === p.id).reduce((s, x) => s + Number(x.valor), 0);
+      if (v) resumo.append(h('div', { class: 'lin', style: 'padding-left:12px' }, h('span', {}, p.nome), h('span', { class: 'v' }, R(v))));
+    }
+  }
+  const semNota = itens.filter((x) => !(x.comprovantes || []).length).length;
+  if (semNota) resumo.append(h('div', { class: 'nota', style: 'color:var(--ambar);font-weight:700' }, `${semNota} gasto(s) ainda sem comprovante anexado.`));
+  // Previdência PGBL e financiamento (informativo)
+  const pgbl = (st.cad.caixinhas || []).filter((c) => /pgbl/i.test(c.nome));
+  if (pgbl.length) {
+    const r = await sb.from('lancamentos').select('valor').in('caixinha_id', pgbl.map((c) => c.id)).eq('previsto', false).eq('resgate', false)
+      .gte('data_hora', new Date(ano, 0, 1).toISOString()).lt('data_hora', new Date(ano + 1, 0, 1).toISOString());
+    const v = (r.data || []).reduce((s, x) => s + Number(x.valor), 0);
+    if (v) resumo.append(h('div', { class: 'lin' }, h('span', {}, 'Contribuições PGBL (no app)'), h('span', { class: 'v' }, R(v))));
+  }
+  corpo.append(resumo);
+
+  // Lista
+  if (itens.length) {
+    const lista = h('div', { class: 'card', style: 'gap:4px' }, h('h2', {}, 'Lançamentos'));
+    for (const x of itens) lista.append(h('div', { class: 'ir-item' },
+      h('div', { class: 'lin' }, h('b', {}, x.ded_prestador || x.descricao), h('b', {}, R(x.valor))),
+      h('div', { class: 'd' }, `${dataCurta(x.data_hora)} · ${NOME_IR[x.ded_tipo]} · ${nomePessoa(x.ded_pessoa)}${x.ded_doc ? ' · ' + x.ded_doc : ' · sem CPF/CNPJ'}`),
+      h('div', { class: 'anexos' }, (x.comprovantes || []).length
+        ? x.comprovantes.map((c) => h('button', { class: 'anexo-nome', onclick: () => abrirComprovante(c.caminho) }, `📎 ${c.nome || 'comprovante'}`))
+        : h('span', { class: 'd', style: 'color:var(--ambar)' }, 'sem comprovante'))));
+    corpo.append(lista);
+    const btn = h('button', { class: 'btn', onclick: async () => {
+      btn.disabled = true; btn.textContent = 'Gerando…';
+      try {
+        await carregarXLSX();
+        const linhas = [];
+        for (const x of itens) {
+          const links = [];
+          for (const c of x.comprovantes || []) { const u = await sb.storage.from('comprovantes').createSignedUrl(c.caminho, 7 * 86400); if (!u.error) links.push(u.data.signedUrl); }
+          linhas.push({ Data: new Date(x.data_hora), Tipo: NOME_IR[x.ded_tipo], 'Para quem': nomePessoa(x.ded_pessoa), 'Quem recebeu': x.ded_prestador || x.descricao,
+            'CPF/CNPJ': x.ded_doc || '', Valor: Number(x.valor), 'Comprovante (link válido por 7 dias)': links.join(' ') });
+        }
+        const wb = XLSX.utils.book_new(); const ws = XLSX.utils.json_to_sheet(linhas, { cellDates: true, dateNF: 'dd/mm/yyyy' });
+        ws['!cols'] = [11, 12, 12, 34, 20, 12, 60].map((w) => ({ wch: w })); XLSX.utils.book_append_sheet(wb, ws, `IR ${ano}`);
+        const bin = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellDates: true });
+        await entregarArquivo(new Blob([bin], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `imposto-de-renda-${ano}.xlsx`);
+        toast('Planilha do IR pronta.');
+      } catch (e) { toast('Não gerou: ' + erroMsg(e), 5000); }
+      btn.disabled = false; btn.textContent = 'Baixar planilha do IR (com links dos comprovantes)';
+    } }, 'Baixar planilha do IR (com links dos comprovantes)');
+    corpo.append(btn);
+  }
+  corpo.append(h('div', { class: 'nota', style: 'padding:0 4px 12px' }, 'Saúde: médico, dentista, psicólogo, exames, hospital e plano de saúde são dedutíveis; remédio de farmácia não. Educação tem limite anual por pessoa. Confira as regras do ano com seu contador.'));
 }
 
 function telaFinanciamento(wrap) {
@@ -1148,17 +1326,7 @@ async function baixarPlanilha(btn) {
     const bin = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellDates: true });
     const nome = `gastos-${new Date().toLocaleDateString('sv-SE')}.xlsx`;
     const blob = new Blob([bin], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    if (window.GastosAndroid) {
-      // Dentro do app Android: guarda numa pasta privada e abre um link temporário no navegador para baixar
-      const caminho = `${st.eu}/${Date.now()}-${nome}`;
-      const up = await sb.storage.from('planilhas').upload(caminho, blob, { contentType: blob.type });
-      if (up.error) throw up.error;
-      const lk = await sb.storage.from('planilhas').createSignedUrl(caminho, 600, { download: nome });
-      if (lk.error) throw lk.error;
-      location.href = lk.data.signedUrl;
-    } else {
-      const a = h('a', { href: URL.createObjectURL(blob), download: nome }); document.body.append(a); a.click(); a.remove();
-    }
+    await entregarArquivo(blob, nome);
     toast('Planilha pronta.');
   } catch (e) { toast('Não gerou a planilha: ' + erroMsg(e), 5000); }
   btn.disabled = false; btn.textContent = 'Baixar planilha (Excel)';
@@ -1551,6 +1719,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharShee
 // Botão "voltar" do Android: fecha a janela aberta ou volta para o Início
 window.voltarApp = () => {
   if (!document.getElementById('sheet').hidden) { fecharSheet(); return true; }
+  if (st.cad && st.aba === 'analise' && st.analiseIR) { st.analiseIR = null; render(); return true; }
   if (st.cad && st.aba === 'analise' && st.analiseFin) { st.analiseFin = null; render(); return true; }
   if (st.cad && st.aba === 'analise' && st.analiseCat) { st.analiseCat = null; render(); return true; }
   if (st.cad && st.aba !== 'inicio') { st.aba = 'inicio'; render(); return true; }

@@ -191,6 +191,7 @@ Deno.serve(async (req) => {
     if (gp.error) throw gp.error;
     const gc = await db.rpc('gerar_compromissos');
     if (gc.error) throw gc.error;
+    await db.rpc('herdar_dedutivel');
     resumo.previstos = gp.data;
     Object.assign(resumo, { investimentos_lidos: investimentosLidos, faturas_pagas: pf.data, novas, casadas_com_aviso: casadas, so_no_banco: criadas });
     await db.from('sync_log').update({ fim: new Date().toISOString(), ok: true, detalhe: JSON.stringify(resumo) }).eq('id', log.data!.id);

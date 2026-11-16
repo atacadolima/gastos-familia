@@ -9,6 +9,8 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -21,6 +23,8 @@ public final class MainActivity extends Activity {
 
     static final String SITE = "https://atacadolima.github.io/gastos-familia/";
     private WebView web;
+    private ValueCallback<Uri[]> escolhaArquivo;
+    private static final int PEDIDO_ARQUIVO = 41;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override protected void onCreate(Bundle b) {
@@ -33,6 +37,20 @@ public final class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setSupportZoom(false);
         web.addJavascriptInterface(new Ponte(), "GastosAndroid");
+        // "Anexar comprovante": abre a galeria/arquivos do celular (foto ou PDF)
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
+                if (escolhaArquivo != null) escolhaArquivo.onReceiveValue(null);
+                escolhaArquivo = cb;
+                Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("*/*");
+                i.putExtra(Intent.EXTRA_MIME_TYPES, new String[] { "image/*", "application/pdf" });
+                try { startActivityForResult(Intent.createChooser(i, "Escolha o comprovante"), PEDIDO_ARQUIVO); }
+                catch (Exception e) { escolhaArquivo = null; return false; }
+                return true;
+            }
+        });
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 Uri u = r.getUrl();
@@ -52,6 +70,14 @@ public final class MainActivity extends Activity {
         super.onResume();
         Enviador.enviarAgora(this);
         Atualizador.verificar(this, false);
+    }
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == PEDIDO_ARQUIVO && escolhaArquivo != null) {
+            escolhaArquivo.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(res, data));
+            escolhaArquivo = null;
+        }
     }
 
     @Override protected void onSaveInstanceState(Bundle o) { super.onSaveInstanceState(o); web.saveState(o); }
