@@ -159,7 +159,10 @@ Deno.serve(async (req) => {
             const textoInv = semAc(`${t.descricao} ${(t.bruto && t.bruto.description) || ''}`);
             const rc: any = (rcx || []).find((r: any) => textoInv.includes(semAc(r.padrao)));
             let cxId: number | null = null;
-            if (rc || cp?.investimento) {
+            // Aplicação automática do saldo da conta (Rende Fácil, RDC automático): o dinheiro só "dorme" lá — é transferência
+            const varredura = /rende ?facil|rend\.facil|rdc automatico/.test(textoInv);
+            if (varredura) cc = 'Entre contas';
+            else if (rc || cp?.investimento) {
               cc = 'Investimento';
               cxId = await caixinhaId(rc ? rc.caixinha : `Investimentos ${t.banco}`, rc ? rc.tipo : 'banco', t.banco);
             }
