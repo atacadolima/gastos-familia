@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v28';
+const VERSAO_TELAS = 'v29';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -242,7 +242,7 @@ function navegacao() {
     svg.setAttribute('aria-hidden', 'true');
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', ICONES[id]); svg.append(p);
     nav.append(h('button', { class: st.aba === id ? 'on' : '', 'aria-current': st.aba === id ? 'page' : null,
-      onclick: () => { st.aba = id; st.filtroCat = null; st.analiseCat = null; st.analiseFin = null; st.analiseIR = null; render(); window.scrollTo(0, 0); } }, svg, rot));
+      onclick: () => { st.aba = id; st.filtroCat = null; st.analiseCat = null; st.analiseFin = null; st.analiseIR = null; st.busca = ''; render(); window.scrollTo(0, 0); } }, svg, rot));
   }
   return nav;
 }
@@ -420,9 +420,14 @@ function telaLancamentos(wrap) {
   chips.append(h('button', { class: 'chip' + (st.verTransf ? ' on' : ''), 'aria-pressed': String(st.verTransf),
     onclick: () => { st.verTransf = !st.verTransf; render(); } }, 'Transferências'));
   cab.append(chips);
+  const busca = h('input', { type: 'search', class: 'busca', value: st.busca || '', placeholder: 'Buscar em todos os meses: nome, valor, observação…', 'aria-label': 'Buscar lançamentos' });
+  cab.append(busca);
   wrap.append(cab);
 
   const corpo = h('div', { class: 'corpo', style: 'gap:8px' });
+  let tempo = null;
+  busca.oninput = () => { clearTimeout(tempo); tempo = setTimeout(() => { st.busca = busca.value.trim(); if (st.busca.length >= 2) buscarLancamentos(corpo); else render(); }, 400); };
+  if (st.busca && st.busca.length >= 2) { wrap.append(corpo); buscarLancamentos(corpo); return; }
   corpo.append(h('div', { class: 'btns' },
     h('button', { class: 'btn', onclick: () => abrirCompromisso(null) }, '+ Compromisso mensal'),
     h('button', { class: 'btn sec', onclick: listaCompromissos }, 'Ver compromissos')));
@@ -441,6 +446,48 @@ function telaLancamentos(wrap) {
   for (const l of lista) {
     const d = diaChave(l.data_hora);
     if (d !== diaAtual) { diaAtual = d; corpo.append(h('div', { class: 'dia' }, d)); }
+    corpo.append(itemLanc(l));
+  }
+}
+
+/** Busca em todos os meses: texto (nome, observação, prestador, partes) ou valor (ex.: 2500, 2.500,00, 115,5). */
+async function buscarLancamentos(corpo) {
+  const q = st.busca;
+  corpo.replaceChildren(h('div', { class: 'vazio' }, 'Buscando…'));
+  const ehValor = /^[\d.,]+$/.test(q) && /\d/.test(q);
+  let ids = new Set(), achados = [];
+  const sel = '*, partes(*), abastecimentos(*), comprovantes(id)';
+  if (ehValor) {
+    const v = Number(q.includes(',') ? q.replace(/\./g, '').replace(',', '.') : q);
+    const r = await sb.from('lancamentos').select(sel).gte('valor', v - 0.005).lt('valor', v + 1).order('data_hora', { ascending: false }).limit(100);
+    if (!r.error) achados = r.data.filter((l) => Number(l.valor) === v || (!q.includes(',') && !q.includes('.') && Math.floor(Number(l.valor)) === v));
+    const rp = await sb.from('partes').select('lancamento_id, valor').gte('valor', v - 0.005).lt('valor', v + 1);
+    for (const p of rp.data || []) if (Math.floor(Number(p.valor)) === Math.floor(v)) ids.add(p.lancamento_id);
+  } else {
+    const t = q.replace(/[,()*%]/g, ' ').trim();
+    const r = await sb.from('lancamentos').select(sel)
+      .or(`descricao.ilike.*${t}*,observacao.ilike.*${t}*,ded_prestador.ilike.*${t}*`).order('data_hora', { ascending: false }).limit(100);
+    if (!r.error) achados = r.data;
+    const rp = await sb.from('partes').select('lancamento_id').or(`observacao.ilike.*${t}*,nome_outro.ilike.*${t}*`).limit(100);
+    for (const p of rp.data || []) ids.add(p.lancamento_id);
+  }
+  for (const l of achados) ids.delete(l.id);
+  if (ids.size) {
+    const r2 = await sb.from('lancamentos').select(sel).in('id', [...ids]);
+    if (!r2.error) achados = achados.concat(r2.data);
+  }
+  if (st.busca !== q) return; // o usuário já digitou outra coisa
+  achados.sort((a, b) => (a.previsto - b.previsto) || (new Date(b.data_hora) - new Date(a.data_hora))); // reais primeiro; previstos no fim
+  const tot = achados.filter((l) => l.conta_como === 'Gasto' && !l.previsto).reduce((s, l) => s + Number(l.valor), 0);
+  corpo.replaceChildren(h('div', { class: 'card', style: 'flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--verde-claro)' },
+    h('span', {}, achados.length ? `${achados.length} encontrado(s)` + (tot ? ` · gastos ${R(tot)}` : '') : 'Nada encontrado.'),
+    h('button', { class: 'btn sec', style: 'min-height:40px', onclick: () => { st.busca = ''; render(); } }, 'Limpar')));
+  let mesAtual = '';
+  for (const l of achados) {
+    const d = new Date(l.data_hora);
+    const m = nomeMes(new Date(d.getFullYear(), d.getMonth(), 1));
+    const rot = l.previsto ? `Previsto · ${m}` : m;
+    if (rot !== mesAtual) { mesAtual = rot; corpo.append(h('div', { class: 'dia' }, rot)); }
     corpo.append(itemLanc(l));
   }
 }
@@ -472,7 +519,7 @@ function itemLanc(l) {
     h('div', { class: 'itemcorpo' },
       h('div', { class: 't' }, h('span', { class: 'n' }, l.descricao || l.tipo), h('span', { class: classeV }, (l.conta_como === 'Receita' ? '+ ' : '') + R(l.valor))),
       h('div', { class: 'd' }, pendente(l) ? h('b', { class: 'alerta' }, 'Toque para escolher a categoria · ') : null,
-        `${hora(l.data_hora)} · ${pendente(l) ? '' : cat + ' · '}${l.banco ? l.banco + fim + ' · ' : ''}${quem}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
+        `${st.busca ? dataCurta(l.data_hora) + ' ' : ''}${hora(l.data_hora)} · ${pendente(l) ? '' : cat + ' · '}${l.banco ? l.banco + fim + ' · ' : ''}${quem}${ab && ab.km ? ` · ${ab.km.toLocaleString('pt-BR')} km` : ''}`),
       tags.length ? h('div', {}, tags) : null,
       l.observacao ? h('div', { class: 'd' }, `“${l.observacao}”`) : null,
       ps.length && !porPes ? h('div', { class: 'partes-lista' }, ps.map((p) => h('div', { class: 'd' },
