@@ -1,5 +1,7 @@
 -- Avisos no celular: itens novos na lista de Compras (agrupados) e compromissos que vencem hoje
 alter table compras_itens add column if not exists notificado boolean not null default false;
+alter table compras_itens add column if not exists notif_comprado boolean not null default false;
+update compras_itens set notif_comprado = true where not notif_comprado and comprado_em is not null and comprado_em < now() - interval '30 minutes';
 update compras_itens set notificado = true where not notificado and criado_em < now() - interval '10 minutes';
 alter table dispositivos add column if not exists user_id uuid references auth.users;
 update dispositivos set user_id = '39e47a06-8893-4260-8de2-6d997739f10c' where nome = 'Celular do Daniel' and user_id is null;
@@ -62,6 +64,30 @@ begin
     update compras_itens set notificado = true where id = any(a.ids);
   end loop;
   update compras_itens set notificado = true where not notificado and (criado_por is null or comprado_em is not null);
+
+  -- 1b) Comprado: espera 10 min sem marcação nova de quem está comprando e avisa só quem pediu
+  for a in
+    select comprado_por, max(comprado_em) ultimo, array_agg(id) ids
+      from compras_itens where not notif_comprado and comprado_em is not null and comprado_por is not null
+     group by comprado_por
+  loop
+    continue when a.ultimo > now() - interval '10 minutes';
+    select coalesce(nome, 'Alguém') into autor from membros where user_id = a.comprado_por;
+    for m in
+      select i.criado_por, count(*) qtd, string_agg(i.nome, ', ' order by i.comprado_em) itens
+        from compras_itens i join membros mb on mb.user_id = i.criado_por
+       where i.id = any(a.ids) and i.criado_por <> a.comprado_por
+       group by i.criado_por
+    loop
+      nomes := case when length(m.itens) > 120 then left(m.itens, 117) || '…' else m.itens end;
+      insert into notificacoes (user_id, titulo, texto, tag, aba)
+      values (m.criado_por, coalesce(autor,'Alguém') || case when m.qtd = 1 then ' comprou o que você pediu' else ' comprou ' || m.qtd || ' itens que você pediu' end,
+              nomes, 'comprado', 'compras');
+      n := n + 1;
+    end loop;
+    update compras_itens set notif_comprado = true where id = any(a.ids);
+  end loop;
+  update compras_itens set notif_comprado = true where not notif_comprado and comprado_em is not null and comprado_por is null;
 
   -- 2) Compromissos que vencem hoje (a partir das 8h), uma vez por compromisso
   if extract(hour from now() at time zone 'America/Sao_Paulo') >= 8 then

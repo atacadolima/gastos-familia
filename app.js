@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v33';
+const VERSAO_TELAS = 'v34';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -2118,8 +2118,26 @@ function cartaoAvisos(corpo, texto) {
   }).catch(() => {});
 }
 function irParaAba(aba) {
-  if (!aba || !st.cad || !['inicio', 'lanc', 'compras', 'carro', 'analise'].includes(aba)) return;
+  if (!aba) return;
+  if (st.papel === 'compras') { mostrarUltimoAviso(aba); return; }
+  if (!st.cad || !['inicio', 'lanc', 'compras', 'carro', 'analise'].includes(aba)) return;
   st.aba = aba; render(); window.scrollTo(0, 0);
+  mostrarUltimoAviso(aba);
+}
+/** Abriu o app tocando num aviso: mostra o texto dele numa faixa no topo por alguns segundos. */
+async function mostrarUltimoAviso(aba) {
+  try {
+    const { data } = await sb.from('notificacoes').select('titulo, texto, criado_em').eq('user_id', st.eu).eq('aba', aba)
+      .order('id', { ascending: false }).limit(1);
+    const n = data && data[0];
+    if (!n || Date.now() - new Date(n.criado_em).getTime() > 24 * 3600e3) return;
+    document.querySelectorAll('.faixa-aviso').forEach((x) => x.remove());
+    const faixa = h('div', { class: 'faixa-aviso', role: 'status' },
+      h('div', { style: 'flex-grow:1' }, h('b', {}, n.titulo), h('div', {}, n.texto)),
+      h('button', { 'aria-label': 'Fechar aviso', onclick: () => faixa.remove() }, '✕'));
+    document.body.append(faixa);
+    setTimeout(() => faixa.remove(), 10000);
+  } catch {}
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.aba) irParaAba(e.data.aba); });
 
@@ -2140,7 +2158,12 @@ async function iniciar() {
   }
   st.eu = data.session.user.id; st.papel = m.papel; st.meuNome = m.nome;
   try {
-    if (st.papel === 'compras') return await telaComprasSimples();
+    if (st.papel === 'compras') {
+      await telaComprasSimples();
+      const abaUrl = new URLSearchParams(location.search).get('aba');
+      if (abaUrl) { history.replaceState(null, '', location.pathname); mostrarUltimoAviso(abaUrl); }
+      return;
+    }
     await carregarCadastros();
     try { await sb.rpc('gerar_compromissos'); } catch {}
     await carregarMes();
