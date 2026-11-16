@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v30';
+const VERSAO_TELAS = 'v31';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -269,7 +269,7 @@ async function telaInicio(wrap) {
   const filtrar = (id) => { st.filtroInicio = st.filtroInicio === id ? null : id; render(); };
 
   wrap.append(h('div', { class: 'hero' },
-    h('div', { class: 'linha1' }, h('span', { class: 'marca' }, h('img', { src: 'icons/icon-192.png', alt: '' }), 'Mutirão'), h('span', { class: 'selo' }, filtro ? nomePessoa(filtro) : 'Família')),
+    h('div', { class: 'linha1' }, h('span', { class: 'marca' }, h('img', { src: 'icons/icon-192.png', alt: '' }), h('span', { class: 'marca-txt' }, h('span', {}, 'Mutirão'), h('span', { class: 'lema-topo' }, 'Juntos, a conta fecha.'))), h('span', { class: 'selo' }, filtro ? nomePessoa(filtro) : 'Família')),
     seletorMes(render),
     h('span', { class: 'rotulo', style: 'margin-top:8px' }, filtro ? `Gasto de ${nomePessoa(filtro)} no mês` : 'Gasto no mês'),
     h('span', { class: 'grande' }, R(total)),
@@ -278,8 +278,8 @@ async function telaInicio(wrap) {
   const qtdPend = new Set(ps.filter((p) => !p.cat && pendente(p.l)).map((p) => p.l.id)).size;
   const irPend = () => { st.aba = 'lanc'; st.soPendentes = true; st.pessoa = filtro || 'todos'; render(); };
   wrap.append(h('div', { class: 'blocos' },
-    h('div', { class: 'bloco' }, h('span', { class: 'r' }, 'Entradas'), h('span', { class: 'n rec' }, R(receitas))),
-    h('div', { class: 'bloco' }, h('span', { class: 'r' }, guardado >= 0 ? 'Guardado' : 'Resgatado'), h('span', { class: 'n inv' }, R(Math.abs(guardado)))),
+    h('div', { class: 'bloco' }, h('span', { class: 'r' }, 'Entradas'), h('span', { class: 'n rec' }, receitas >= 10000 ? Rmil(receitas) : R(receitas))),
+    h('div', { class: 'bloco' }, h('span', { class: 'r' }, guardado >= 0 ? 'Guardado' : 'Resgatado'), h('span', { class: 'n inv' }, Math.abs(guardado) >= 10000 ? Rmil(Math.abs(guardado)) : R(Math.abs(guardado)))),
     h('button', { class: 'bloco' + (qtdPend ? ' amb' : ''), onclick: irPend }, h('span', { class: 'r' }, 'A categorizar'),
       h('span', { class: 'n' }, qtdPend ? `${qtdPend} ${qtdPend === 1 ? 'item' : 'itens'}` : 'Tudo certo'))));
   const corpo = h('div', { class: 'corpo' });
