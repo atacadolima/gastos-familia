@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v35';
+const VERSAO_TELAS = 'v36';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -518,6 +518,7 @@ function itemLanc(l) {
   else if (l.previsto) tags.push(h('span', { class: 'tag' }, l.serie && l.serie.startsWith('rec:') ? 'previsto · assinatura' : 'previsto'));
   if (!l.previsto && l.compromisso_id) tags.push(h('span', { class: 'tag ok' }, 'compromisso pago'));
   if (l.ded_tipo) tags.push(h('span', { class: 'tag ir' }, `IR · ${NOME_IR[l.ded_tipo]}${(l.comprovantes || []).length ? ' · 📎' : ' · sem nota'}`));
+  else if (irPendente(l)) tags.push(h('span', { class: 'tag amb' }, 'IR?'));
   else if (l.conferido) tags.push(h('span', { class: 'tag ok' }, l.aviso_id ? 'aviso + banco' : 'banco'));
   else if (l.origem === 'aviso') tags.push(h('span', { class: 'tag amb' }, 'só aviso'));
   if (l.total_parcelas > 1) tags.push(h('span', { class: 'tag' }, `parcela ${l.parcela}/${l.total_parcelas}`));
@@ -646,7 +647,14 @@ function abrirLanc(l) {
     arquivo.value = ''; recarregarAnexos(); toast('Comprovante anexado.');
   };
   const blocoIR = h('div', { class: 'card', style: 'gap:8px' }, h('h2', {}, 'Imposto de Renda'),
-    sugereIR && !l.ded_tipo ? h('div', { class: 'nota', style: 'color:var(--ambar);font-weight:700' }, 'Pode ser dedutível no IR. Quer marcar e anexar a nota?') : null,
+    irPendente(l) ? h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
+      h('div', { class: 'nota', style: 'color:var(--ambar);font-weight:700' }, 'Pode ser dedutível no IR. Quer marcar e anexar a nota?'),
+      h('button', { class: 'btn sec', type: 'button', onclick: async () => {
+        const q = sb.from('lancamentos').update({ ded_descartado: true });
+        const r = l.serie ? await q.eq('serie', l.serie) : await q.eq('id', l.id);
+        if (r.error) return toast('Não salvou: ' + erroMsg(r.error), 4000);
+        fecharSheet(); await carregarMes(); render(); toast('Certo, não é dedutível. A etiqueta IR? saiu.');
+      } }, 'Não é dedutível')) : null,
     h('label', { class: 'check' }, dedChk, 'Dedutível no Imposto de Renda'), dedCampos, listaAnexos,
     h('button', { class: 'btn sec', type: 'button', onclick: () => arquivo.click() }, 'Anexar comprovante (foto ou PDF)'), arquivo);
   recarregarAnexos();
@@ -694,6 +702,7 @@ function abrirLanc(l) {
       const ehDed = comoSel.value === 'Gasto' && dedChk.checked;
       const ded = { ded_tipo: ehDed ? dedTipo.value : null, ded_pessoa: ehDed ? dedPes.value : null,
         ded_prestador: ehDed ? (dedPrest.value.trim() || null) : null, ded_doc: ehDed ? (dedDoc.value.trim() || null) : null };
+      if (ehDed) ded.ded_descartado = false;
       Object.assign(upd, ded);
       const r = await sb.from('lancamentos').update(upd).eq('id', l.id);
       if (r.error) throw r.error;
@@ -1139,17 +1148,22 @@ async function telaAnalise(wrap) {
 }
 
 // ----- Imposto de Renda -----
-const TIPOS_IR = [['saude', 'Saúde (médico, dentista, exames, plano)'], ['educacao', 'Educação (escola, faculdade)'], ['previdencia', 'Previdência PGBL']];
+const TIPOS_IR = [['saude', 'Saúde (médico, dentista, exames, plano)'], ['educacao', 'Educação (escola, faculdade)'], ['previdencia', 'Previdência (INSS/GPS, PGBL)']];
 const NOME_IR = { saude: 'saúde', educacao: 'educação', previdencia: 'previdência' };
 /** Sugere "pode ser dedutível" (farmácia não entra: remédio de farmácia não é dedutível). */
 function sugestaoIR(l) {
   if (l.conta_como !== 'Gasto') return null;
   const c = nomeCat(l.categoria_id) || '', d = (l.descricao || '').toLowerCase();
-  if (/drog|farm[aá]c|raia|pacheco|pague menos|panvel|ara[uú]jo|venancio/.test(d)) return null;
+  if (/drog|farm[aá]c|raia|pacheco|pague menos|panvel|ara[uú]jo|venancio/.test(d) || /farm[aá]c/i.test(c)) return null;
   if (/educa/i.test(c) || /escola|col[eé]gio|faculdade|universidade|creche|ber[cç][aá]rio/.test(d)) return 'educacao';
   if (/m[eé]dic|cl[ií]nic|odonto|dentist|psic[oó]|hospital|laborat|exame|unimed|amil|hapvida|sulam[eé]rica|bradesco sa[uú]de|fisioter|fonoaud|nutricion|terapia|ortodon/.test(d)) return 'saude';
   if (/sa[uú]de/i.test(c)) return 'saude';
+  if (/\bgps\b|\binss\b|pgbl|brasilprev|previd[eê]ncia (social|privada)/.test(d)) return 'previdencia';
   return null;
+}
+/** Pode ser dedutível, ainda não foi marcado e ninguém disse "não é". */
+function irPendente(l) {
+  return !l.ded_tipo && !l.ded_descartado && !!sugestaoIR(l);
 }
 async function abrirComprovante(caminho) {
   const r = await sb.storage.from('comprovantes').createSignedUrl(caminho, 600);
@@ -1178,6 +1192,44 @@ async function dadosIR(ano) {
     .not('ded_tipo', 'is', null).eq('previsto', false).gte('data_hora', de).lt('data_hora', ate).order('data_hora');
   if (r.error) throw r.error;
   return r.data;
+}
+
+/** Gastos do ano que parecem dedutíveis e ainda não foram marcados nem descartados. */
+async function irParaConferir(ano) {
+  const de = new Date(ano, 0, 1).toISOString(), ate = new Date(ano + 1, 0, 1).toISOString();
+  const out = [];
+  for (let i = 0; i < 10; i++) {
+    const r = await sb.from('lancamentos').select('id, data_hora, valor, descricao, categoria_id, conta_como, ded_tipo, ded_descartado, serie')
+      .eq('conta_como', 'Gasto').eq('previsto', false).is('ded_tipo', null).eq('ded_descartado', false)
+      .gte('data_hora', de).lt('data_hora', ate).order('data_hora', { ascending: false }).range(i * 1000, i * 1000 + 999);
+    if (r.error) throw r.error;
+    out.push(...r.data.filter((x) => sugestaoIR(x)));
+    if (r.data.length < 1000) break;
+  }
+  return out;
+}
+function conferirIR(pend) {
+  const lista = h('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+  const desenhar = () => lista.replaceChildren(...(pend.length ? pend.map((x) => h('div', { class: 'card', style: 'gap:8px;padding:12px 14px' },
+    h('div', { class: 'lin' }, h('b', {}, x.descricao), h('b', {}, R(x.valor))),
+    h('div', { class: 'd' }, `${dataCurta(x.data_hora)} · ${nomeCat(x.categoria_id) || 'sem categoria'} · parece ${NOME_IR[sugestaoIR(x)]}`),
+    h('div', { style: 'display:flex;gap:8px' },
+      h('button', { class: 'btn', style: 'flex:1;min-height:40px', onclick: async () => {
+        const r = await sb.from('lancamentos').select('*, partes(*), abastecimentos(*), comprovantes(id)').eq('id', x.id).single();
+        if (r.error) return toast('Não abriu: ' + erroMsg(r.error), 4000);
+        abrirLanc(r.data);
+      } }, 'É dedutível'),
+      h('button', { class: 'btn sec', style: 'flex:1;min-height:40px', onclick: async () => {
+        const q = sb.from('lancamentos').update({ ded_descartado: true });
+        const r = x.serie ? await q.eq('serie', x.serie) : await q.eq('id', x.id);
+        if (r.error) return toast('Não salvou: ' + erroMsg(r.error), 4000);
+        for (let i = pend.length - 1; i >= 0; i--) if (pend[i].id === x.id || (x.serie && pend[i].serie === x.serie)) pend.splice(i, 1);
+        desenhar();
+      } }, 'Não é')))) : [h('div', { class: 'vazio' }, 'Tudo conferido.')]));
+  desenhar();
+  abrirSheet(h('h3', {}, 'Pode ser dedutível?'),
+    h('div', { class: 'nota' }, '"É dedutível" abre o gasto para marcar quem recebeu, para quem foi e anexar a nota. "Não é" tira da lista e não pergunta de novo.'),
+    lista);
 }
 
 async function telaIR(wrap) {
@@ -1212,7 +1264,16 @@ async function telaIR(wrap) {
     const v = (r.data || []).reduce((s, x) => s + Number(x.valor), 0);
     if (v) resumo.append(h('div', { class: 'lin' }, h('span', {}, 'Contribuições PGBL (no app)'), h('span', { class: 'v' }, R(v))));
   }
-  corpo.append(resumo);
+  corpo.prepend(resumo);
+  irParaConferir(ano).then((pend) => {
+    if (!pend.length) return;
+    const total = pend.reduce((s, x) => s + Number(x.valor), 0);
+    resumo.before(h('button', { class: 'card', style: 'flex-direction:row;align-items:center;gap:12px;text-align:left;border:2px solid var(--laranja);background:var(--ambar-fundo);cursor:pointer',
+      onclick: () => conferirIR(pend) },
+      h('div', { style: 'flex:1' }, h('b', { style: 'color:var(--ambar)' }, `${pend.length} ${pend.length === 1 ? 'gasto pode ser dedutível' : 'gastos podem ser dedutíveis'}`),
+        h('div', { class: 'nota' }, `${R(total)} em ${ano} ainda não marcados. Toque para conferir.`)),
+      h('span', { 'aria-hidden': 'true', style: 'font-size:22px;color:var(--ambar)' }, '›')));
+  }).catch(() => {});
 
   // Lista
   if (itens.length) {

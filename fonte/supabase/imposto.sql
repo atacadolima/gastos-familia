@@ -64,3 +64,4 @@ begin
   get diagnostics m = row_count;
   return n + m;
 end $$;
+alter table lancamentos add column if not exists ded_descartado boolean not null default false; -- 'não é dedutível': some a etiqueta IR?
