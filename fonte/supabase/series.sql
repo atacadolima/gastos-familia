@@ -19,6 +19,12 @@ begin
          || '|' || total_parcelas || '|' || round(valor)::text
    where total_parcelas > 1 and serie is null and not previsto;
 
+  -- 1b) Observação (ex.: "Bagageiro carro") vale para a compra toda: preenche as parcelas sem observação
+  update lancamentos l set observacao = s.observacao
+    from (select distinct on (serie) serie, observacao from lancamentos
+           where serie like 'parc:%' and nullif(trim(observacao), '') is not null order by serie, atualizado_em desc) s
+   where l.serie = s.serie and nullif(trim(l.observacao), '') is null;
+
   -- 2) Parcela real chegou: apaga a prevista correspondente
   with apagar as (
     delete from lancamentos p where p.previsto
@@ -97,6 +103,7 @@ begin
   select * into base from lancamentos where id = p_id;
   if base.serie is null then return 0; end if;
   update lancamentos set categoria_id = base.categoria_id, pessoa_id = base.pessoa_id, conta_como = base.conta_como,
+         observacao = coalesce(nullif(trim(base.observacao), ''), observacao),
          caixinha_id = base.caixinha_id, atualizado_em = now()
    where serie = base.serie and id <> base.id;
   get diagnostics n = row_count;
