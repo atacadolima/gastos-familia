@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v37';
+const VERSAO_TELAS = 'v38';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -1005,7 +1005,7 @@ async function dadosAnalise() {
   const k = `${de.toISOString()}|${st.lancs.length}`;
   if (st.analiseDados && st.analiseDados.k === k) return st.analiseDados;
   const { data, error } = await sb.from('lancamentos')
-    .select('id, data_hora, valor, conta_como, categoria_id, pessoa_id, previsto, descricao, observacao, serie, compromisso_id, parcela, total_parcelas, partes(categoria_id, pessoa_id, valor)')
+    .select('id, data_hora, valor, conta_como, categoria_id, pessoa_id, previsto, descricao, observacao, tipo, banco, serie, compromisso_id, parcela, total_parcelas, partes(categoria_id, pessoa_id, valor)')
     .gte('data_hora', de.toISOString()).lt('data_hora', ate.toISOString());
   if (error) throw error;
   const { data: prim } = await sb.from('lancamentos').select('data_hora').eq('previsto', false).order('data_hora').limit(1);
@@ -1025,43 +1025,111 @@ function porcoesAnalise(lancs, comPrevisto) {
   return out;
 }
 
-/** Explica o semáforo do mês: a conta, o que ainda vai cair e onde mais saiu. */
-function abrirMotivoMes({ entrou, saiu, prev, fim, mesAtual, previstos, doMesReais }) {
+/** Compra no cartão de crédito: o dinheiro só sai da conta quando a fatura vence. */
+const ehCartao = (l) => /^Compra no crédito/.test(l.tipo || '') || l.tipo === 'Recarga da Tag' || l.tipo === 'Passagem da Tag';
+const DIAS_FECHA = 10; // o cartão costuma fechar uns 10 dias antes do vencimento
+
+/** O mês pelo dinheiro da conta: entrou, já saiu (Pix, débito, boleto, faturas pagas) e ainda vai sair (compromissos, faturas a vencer). */
+async function caixaDoMes(lancs, mes, mesAtual) {
+  const doMes = (l) => chaveMes(new Date(l.data_hora)) === chaveMes(mes);
+  const receitas = lancs.filter((l) => l.conta_como === 'Receita' && !l.previsto && doMes(l)).reduce((s, l) => s + Number(l.valor), 0);
+  // Transferências entre contas suas: entre contas que o app acompanha, se anulam; o que sobra veio de (ou foi para) conta que ele não vê, como a da empresa
+  const transf = lancs.filter((l) => !l.previsto && doMes(l) && l.conta_como === 'Entre contas' && l.tipo !== 'Crédito no cartão' && l.tipo !== 'Pagamento de fatura');
+  const sinal = (l) => (/recebid|^Entrada/i.test(l.tipo || '') ? 1 : /enviad|^Saída/i.test(l.tipo || '') ? -1 : 0);
+  const transfLiq = Math.round(transf.reduce((s, l) => s + sinal(l) * Number(l.valor), 0) * 100) / 100;
+  const entrou = receitas + Math.max(transfLiq, 0);
+  const saidas = lancs.filter((l) => !l.previsto && doMes(l) && (l.tipo === 'Pagamento de fatura' || (l.conta_como === 'Gasto' && !ehCartao(l))));
+  const faturasPagas = saidas.filter((l) => l.tipo === 'Pagamento de fatura');
+  const outrasSaidas = saidas.filter((l) => l.tipo !== 'Pagamento de fatura');
+  const saiu = saidas.reduce((s, l) => s + Number(l.valor), 0) + Math.max(-transfLiq, 0);
+  const compromissos = lancs.filter((l) => l.previsto && doMes(l) && l.conta_como === 'Gasto' && !ehCartao(l));
+  const noCartao = lancs.filter((l) => doMes(l) && l.conta_como === 'Gasto' && ehCartao(l));
+  const faturas = [];
+  if (mesAtual) {
+    const hojeIso = isoD(new Date());
+    const ini = isoD(addMes(mes, -2)), fimMes = isoD(new Date(mes.getFullYear(), mes.getMonth() + 1, 0));
+    const r = await sb.from('faturas_cartao').select('banco, numero, vencimento, total').gte('vencimento', ini).lte('vencimento', fimMes).order('vencimento');
+    const porCartao = {};
+    for (const f of r.data || []) (porCartao[`${f.banco} ${f.numero}`] ||= []).push(f);
+    for (const [cartao, fs] of Object.entries(porCartao)) {
+      const ult = fs[fs.length - 1];
+      const banco = ult.banco;
+      const pago = (venc) => faturasPagas.some((l) => l.banco === banco && new Date(l.data_hora) >= new Date(venc + 'T00:00:00') - 5 * 86400000);
+      const doMesF = fs.find((f) => chaveMes(new Date(f.vencimento + 'T12:00:00')) === chaveMes(mes));
+      if (doMesF) {
+        if (doMesF.vencimento >= hojeIso && Number(doMesF.total) > 0 && !pago(doMesF.vencimento))
+          faturas.push({ cartao, banco, vencimento: doMesF.vencimento, total: Number(doMesF.total), estimada: false });
+        continue;
+      }
+      // O banco ainda não fechou a fatura deste mês: estima pelas compras no cartão desde o último fechamento
+      const dia = Number(ult.vencimento.slice(8, 10));
+      const venc = new Date(mes.getFullYear(), mes.getMonth(), Math.min(dia, new Date(mes.getFullYear(), mes.getMonth() + 1, 0).getDate()));
+      if (isoD(venc) < hojeIso) continue;
+      const de = new Date(new Date(ult.vencimento + 'T12:00:00') - DIAS_FECHA * 86400000), ate = new Date(venc - DIAS_FECHA * 86400000);
+      const est = lancs.filter((l) => !l.previsto && l.conta_como === 'Gasto' && ehCartao(l) && l.banco === banco && new Date(l.data_hora) >= de && new Date(l.data_hora) < ate)
+        .reduce((s, l) => s + Number(l.valor), 0);
+      if (est > 0) faturas.push({ cartao, banco, vencimento: isoD(venc), total: est, estimada: true });
+    }
+  }
+  const vaiSair = compromissos.reduce((s, l) => s + Number(l.valor), 0) + faturas.reduce((s, f) => s + f.total, 0);
+  return { entrou, receitas, transfLiq, saiu, vaiSair, faturasPagas, outrasSaidas, compromissos, faturas, noCartao };
+}
+
+/** Explica o semáforo do mês: a conta, o que ainda vai sair e onde mais saiu. */
+function abrirMotivoMes({ cx, fim, mesAtual, doMesReais }) {
   const abrirL = async (id) => {
     const r = await sb.from('lancamentos').select('*, partes(*), abastecimentos(*), comprovantes(id)').eq('id', id).single();
     if (r.error) return toast('Não abriu: ' + erroMsg(r.error), 4000);
     abrirLanc(r.data);
   };
-  const grupoDe = (l) => l.compromisso_id ? 'Compromissos' : (l.serie || '').startsWith('rec:') ? 'Assinaturas'
-    : (l.total_parcelas > 1 || (l.serie || '').startsWith('parc:')) ? 'Parcelas de cartão' : 'Outros previstos';
-  const blocos = [];
-  for (const g of ['Compromissos', 'Parcelas de cartão', 'Assinaturas', 'Outros previstos']) {
-    const itens = previstos.filter((l) => grupoDe(l) === g).sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
-    if (!itens.length) continue;
-    const tot = itens.reduce((s, l) => s + Number(l.valor), 0);
-    blocos.push(h('div', { class: 'card', style: 'gap:0;padding:6px 14px' },
-      h('div', { class: 'lin', style: 'padding:8px 0 4px' }, h('b', {}, g), h('b', {}, R(tot))),
-      itens.map((l) => h('button', { class: 'item', style: 'border:none;border-top:1px solid #EEF0ED;border-radius:0;padding:10px 0;box-shadow:none;background:none', onclick: () => abrirL(l.id) },
-        h('div', { class: 'itemcorpo' },
-          h('div', { class: 't' }, h('span', { class: 'n' }, l.descricao || 'Previsto'), h('span', { class: 'v' }, R(l.valor))),
-          h('div', { class: 'd' }, `dia ${dataCurta(l.data_hora)}${l.total_parcelas > 1 ? ` · parcela ${l.parcela}/${l.total_parcelas}` : ''}${l.observacao ? ` · “${l.observacao}”` : ''}`))))));
-  }
+  const estiloLinha = 'border:none;border-top:1px solid #EEF0ED;border-radius:0;padding:10px 0;box-shadow:none;background:none';
+  const linhaL = (l, extra) => h('button', { class: 'item', style: estiloLinha, onclick: () => abrirL(l.id) },
+    h('div', { class: 'itemcorpo' },
+      h('div', { class: 't' }, h('span', { class: 'n' }, l.descricao || 'Lançamento'), h('span', { class: 'v' }, R(l.valor))),
+      h('div', { class: 'd' }, `dia ${dataCurta(l.data_hora)}${extra ? ' · ' + extra : ''}${l.observacao ? ` · “${l.observacao}”` : ''}`)));
+  const bloco = (titulo, total, filhos, nota) => h('div', { class: 'card', style: 'gap:0;padding:6px 14px' },
+    h('div', { class: 'lin', style: 'padding:8px 0 4px' }, h('b', {}, titulo), h('b', {}, R(total))), nota ? h('div', { class: 'nota', style: 'padding-bottom:6px' }, nota) : null, ...filhos);
+  const soma = (arr) => arr.reduce((s, l) => s + Number(l.valor), 0);
+  const ord = (arr) => [...arr].sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
+
+  const vai = [];
+  if (cx.compromissos.length) vai.push(bloco('Compromissos', soma(cx.compromissos), ord(cx.compromissos).map((l) => linhaL(l))));
+  if (cx.faturas.length) vai.push(bloco('Faturas de cartão', cx.faturas.reduce((s, f) => s + f.total, 0),
+    cx.faturas.map((f) => h('div', { class: 'item', style: estiloLinha },
+      h('div', { class: 'itemcorpo' }, h('div', { class: 't' }, h('span', { class: 'n' }, `Cartão ${f.cartao}`), h('span', { class: 'v' }, (f.estimada ? '≈ ' : '') + R(f.total))),
+        h('div', { class: 'd' }, `vence dia ${dataBR(f.vencimento).slice(0, 5)}${f.estimada ? ' · estimativa: o banco ainda não fechou a fatura' : ' · valor informado pelo banco'}`))))));
+
+  const ja = [];
+  if (cx.faturasPagas.length) ja.push(bloco('Faturas de cartão pagas', soma(cx.faturasPagas), ord(cx.faturasPagas).map((l) => linhaL(l))));
+  if (cx.outrasSaidas.length) ja.push(bloco('Pix, débito e boletos', soma(cx.outrasSaidas), ord(cx.outrasSaidas).reverse().slice(0, 8).map((l) => linhaL(l)),
+    cx.outrasSaidas.length > 8 ? `Os 8 mais recentes de ${cx.outrasSaidas.length}.` : null));
+
   const porCat = {};
   for (const x of doMesReais) porCat[x.cat || 0] = (porCat[x.cat || 0] || 0) + x.valor;
+  const totCat = Object.values(porCat).reduce((s, v) => s + v, 0);
   const top = Object.entries(porCat).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const frase = `Entraram ${R(entrou)}, já saíram ${R(saiu)}` + (prev ? ` e ainda vão cair ${R(prev)}` : '') + '. '
+  const cartaoTot = soma(cx.noCartao);
+  const frase = `Entraram ${R(cx.entrou)} na conta, já saíram ${R(cx.saiu)}` + (cx.vaiSair ? ` e ainda vão sair ${R(cx.vaiSair)}` : '') + '. '
     + (fim < 0 ? `Faltam ${R(-fim)} para fechar o mês.` : `${mesAtual ? 'Devem sobrar' : 'Sobraram'} ${R(fim)}.`);
   abrirSheet(h('h3', {}, fim < 0 ? 'Por que o mês fecha no vermelho' : 'Como fica o mês'),
     h('div', { class: 'card', style: `background:${fim < 0 ? '#FDECEA' : '#E6F4EA'};box-shadow:none` }, h('b', { style: 'font-size:16px;line-height:1.4' }, frase),
-      h('div', { class: 'nota' }, 'A conta usa só o dinheiro que já entrou nas contas.')),
-    blocos.length ? h('h2', { style: 'margin:6px 2px 0' }, 'Ainda vai cair') : h('div', { class: 'nota' }, 'Nada previsto para cair até o fim do mês.'),
-    ...blocos,
-    top.length ? h('h2', { style: 'margin:6px 2px 0' }, 'Onde mais saiu este mês') : null,
-    top.length ? h('div', { class: 'card', style: 'gap:0;padding:6px 14px' }, top.map(([cat, v]) => h('button', { class: 'item',
-      style: 'border:none;border-top:1px solid #EEF0ED;border-radius:0;padding:10px 0;box-shadow:none;background:none',
-      onclick: () => { if (Number(cat)) { fecharSheet(); st.analiseCat = Number(cat); render(); window.scrollTo(0, 0); } } },
-      h('div', { class: 'itemcorpo' }, h('div', { class: 't' }, h('span', { class: 'n' }, nomeCat(Number(cat)) || 'A categorizar'), h('span', { class: 'v' }, R(v))),
-        h('div', { class: 'd' }, `${Math.round((v / Math.max(saiu, 1)) * 100)}% do que já saiu`))))) : null);
+      h('div', { class: 'nota' }, 'Conta só o dinheiro que entra e sai da conta. Compra no cartão entra quando a fatura vence.'),
+      cx.transfLiq ? h('div', { class: 'nota' }, cx.transfLiq > 0
+        ? `Das entradas, ${R(cx.receitas)} são salário e outras receitas, e ${R(cx.transfLiq)} vieram de contas suas que o app não acompanha (transferências e depósitos).`
+        : `Inclui ${R(-cx.transfLiq)} transferidos para contas suas que o app não acompanha.`) : null),
+    vai.length ? h('h2', { style: 'margin:6px 2px 0' }, 'Ainda vai sair da conta') : (mesAtual ? h('div', { class: 'nota' }, 'Nada previsto para sair da conta até o fim do mês.') : null),
+    ...vai,
+    ja.length ? h('h2', { style: 'margin:6px 2px 0' }, 'Já saiu da conta') : null,
+    ...ja,
+    cartaoTot ? h('div', { class: 'card', style: 'gap:4px;background:var(--verde-claro);box-shadow:none' },
+      h('div', { class: 'lin' }, h('b', {}, 'Compras no cartão deste mês'), h('b', {}, R(cartaoTot))),
+      h('div', { class: 'nota', style: 'color:var(--texto)' }, 'Incluem as parcelas do mês. Não entram na conta acima: saem da conta quando a fatura vencer.')) : null,
+    top.length ? h('h2', { style: 'margin:6px 2px 0' }, 'Onde mais gastamos este mês') : null,
+    top.length ? h('div', { class: 'card', style: 'gap:0;padding:6px 14px' }, h('div', { class: 'nota', style: 'padding:6px 0' }, 'Pela data da compra, no cartão ou na conta.'),
+      top.map(([cat, v]) => h('button', { class: 'item', style: estiloLinha,
+        onclick: () => { if (Number(cat)) { fecharSheet(); st.analiseCat = Number(cat); render(); window.scrollTo(0, 0); } } },
+        h('div', { class: 'itemcorpo' }, h('div', { class: 't' }, h('span', { class: 'n' }, nomeCat(Number(cat)) || 'A categorizar'), h('span', { class: 'v' }, R(v))),
+          h('div', { class: 'd' }, `${Math.round((v / Math.max(totCat, 1)) * 100)}% do gasto do mês`))))) : null);
 }
 
 async function telaAnalise(wrap) {
@@ -1083,38 +1151,36 @@ async function telaAnalise(wrap) {
   const entradasMes = (m) => lancs.filter((l) => l.conta_como === 'Receita' && !l.previsto && chaveMes(new Date(l.data_hora)) === chaveMes(m))
     .reduce((s, l) => s + Number(l.valor), 0);
 
-  // 1) Como estou indo
-  const entrou = entradasMes(st.mes);
-  const saiu = somaV(doMes(reais, st.mes));
-  const prev = lancs.filter((l) => l.previsto && l.conta_como === 'Gasto' && chaveMes(new Date(l.data_hora)) === chaveMes(st.mes))
-    .reduce((s, l) => s + Number(l.valor), 0);
+  // 1) Como fica a conta (pelo dinheiro que entra e sai da conta; compra no cartão sai na fatura)
+  const cx = await caixaDoMes(lancs, st.mes, mesAtual);
+  const entrou = cx.entrou, saiu = cx.saiu, prev = cx.vaiSair;
+  const prevCompra = lancs.filter((l) => l.previsto && l.conta_como === 'Gasto' && chaveMes(new Date(l.data_hora)) === chaveMes(st.mes)).reduce((s, l) => s + Number(l.valor), 0);
   const fim = entrou - saiu - prev;
   const nivel = fim < 0 ? 'ver' : fim < entrou * 0.1 ? 'ama' : 'verde';
-  const frase = { ver: mesAtual ? 'Atenção: no ritmo atual, o mês fecha no vermelho' : 'O mês fechou no vermelho',
+  const frase = { ver: mesAtual ? 'Atenção: o mês deve fechar no vermelho' : 'O mês fechou no vermelho',
     ama: mesAtual ? 'No limite: o mês deve fechar quase sem sobra' : 'O mês fechou quase sem sobra',
     verde: mesAtual ? 'Tudo bem: o mês deve fechar com sobra' : 'O mês fechou com sobra' }[nivel];
   const cor = { ver: 'var(--erro)', ama: 'var(--laranja)', verde: 'var(--receita)' }[nivel];
   const tot = Math.max(entrou, saiu + prev, 1);
   corpo.append(h('div', { class: 'card semaforo ' + nivel },
     h('div', { style: 'display:flex;align-items:center;gap:10px' }, h('span', { class: 'luz', style: `background:${cor}` }), h('b', { style: 'font-size:16px' }, frase)),
-    h('div', { class: 'lin' }, h('span', {}, 'Entrou'), h('b', { style: 'color:var(--receita)' }, Rmil(entrou))),
-    h('div', { class: 'lin' }, h('span', {}, 'Já saiu'), h('b', {}, Rmil(saiu))),
-    prev ? h('div', { class: 'lin' }, h('span', {}, 'Ainda vai cair (parcelas e compromissos)'), h('b', {}, Rmil(prev))) : null,
+    h('div', { class: 'lin' }, h('span', {}, 'Entrou na conta'), h('b', { style: 'color:var(--receita)' }, Rmil(entrou))),
+    h('div', { class: 'lin' }, h('span', {}, 'Já saiu da conta'), h('b', {}, Rmil(saiu))),
+    prev ? h('div', { class: 'lin' }, h('span', {}, 'Ainda vai sair (compromissos e faturas)'), h('b', {}, Rmil(prev))) : null,
     h('div', { class: 'lin total' }, h('b', {}, mesAtual ? 'Previsão do fim do mês' : 'Resultado do mês'), h('b', { style: `color:${fim < 0 ? 'var(--erro)' : 'var(--receita)'}` }, (fim < 0 ? '− ' : '+ ') + Rmil(Math.abs(fim)))),
-    h('div', { class: 'barra-sem', role: 'img', 'aria-label': `Gasto ${Rmil(saiu)}, previsto ${Rmil(prev)}, entradas ${Rmil(entrou)}` },
+    h('div', { class: 'barra-sem', role: 'img', 'aria-label': `Saiu ${Rmil(saiu)}, ainda vai sair ${Rmil(prev)}, entrou ${Rmil(entrou)}` },
       h('div', { style: `width:${(Math.min(saiu, tot) / tot) * 100}%;background:var(--verde)` }),
       h('div', { class: 'listra', style: `width:${(Math.min(prev, Math.max(tot - saiu, 0)) / tot) * 100}%` }),
       fim < 0 ? h('div', { style: `width:${(Math.min(-fim, tot) / tot) * 100}%;background:var(--erro)` }) : null),
-    h('div', { class: 'nota' }, 'Azul: já gasto · listrado: previsto · vermelho: o que passa do que entrou. Entradas: só o que o app marca como entrada; transferências entre suas contas não contam.'),
-    h('button', { class: 'btn sec', style: 'min-height:44px', onclick: () => abrirMotivoMes({ entrou, saiu, prev, fim, mesAtual,
-      previstos: lancs.filter((l) => l.previsto && l.conta_como === 'Gasto' && chaveMes(new Date(l.data_hora)) === chaveMes(st.mes)),
-      doMesReais: doMes(reais, st.mes) }) }, fim < 0 ? 'Por que fecha no vermelho? ›' : 'Ver o que compõe a conta ›')));
+    h('div', { class: 'nota' }, 'Conta pelo dinheiro da conta: compra no cartão entra quando a fatura vence. Verde: já saiu · listrado: ainda vai sair · vermelho: o que passa do que entrou.'),
+    h('button', { class: 'btn sec', style: 'min-height:44px', onclick: () => abrirMotivoMes({ cx, fim, mesAtual, doMesReais: doMes(reais, st.mes) }) },
+      fim < 0 ? 'Por que fecha no vermelho? ›' : 'Ver o que compõe a conta ›')));
 
   // 2) Mês a mês
   const meses = [];
   for (let i = 5; i >= 0; i--) { const m = addMes(st.mes, -i); if (!inicio || addMes(m, 1) > inicio) meses.push(m); }
   const serie = meses.map((m) => ({ m, g: somaV(doMes(reais, m)), e: entradasMes(m),
-    p: chaveMes(m) === chaveMes(st.mes) ? prev : 0 }));
+    p: chaveMes(m) === chaveMes(st.mes) ? prevCompra : 0 }));
   const maxV = Math.max(1, ...serie.map((x) => Math.max(x.g + x.p, x.e)));
   const graf = h('div', { class: 'graf' });
   for (const x of serie) {

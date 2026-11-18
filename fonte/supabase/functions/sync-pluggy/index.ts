@@ -115,6 +115,15 @@ Deno.serve(async (req) => {
           vencimento: cd.balanceDueDate ? String(cd.balanceDueDate).slice(0, 10) : null,
           atualizado_em: new Date().toISOString(),
         });
+        // Faturas fechadas do cartão (vencimento e valor), para o semáforo "pela conta"
+        if (c.type === 'CREDIT') {
+          try {
+            const fs = (await pluggy(`/bills?accountId=${c.id}`, apiKey)).results || [];
+            if (fs.length) await db.from('faturas_cartao').upsert(fs.map((f: any) => ({
+              id: f.id, conta_id: c.id, banco: item.banco, numero: c.number, vencimento: String(f.dueDate).slice(0, 10),
+              total: f.totalAmount, minimo: f.minimumPaymentAmount ?? null, atualizado_em: new Date().toISOString() })));
+          } catch (e) { resumo[`faturas_${item.banco}`] = 'não lidas'; }
+        }
 
         let prox: string | null = `?accountId=${c.id}&dateFrom=${dia(de)}&dateTo=${dia(ate)}`;
         for (let volta = 0; prox && volta < 50; volta++) {
