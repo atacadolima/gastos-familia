@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v36';
+const VERSAO_TELAS = 'v37';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -1005,7 +1005,7 @@ async function dadosAnalise() {
   const k = `${de.toISOString()}|${st.lancs.length}`;
   if (st.analiseDados && st.analiseDados.k === k) return st.analiseDados;
   const { data, error } = await sb.from('lancamentos')
-    .select('id, data_hora, valor, conta_como, categoria_id, pessoa_id, previsto, descricao, partes(categoria_id, pessoa_id, valor)')
+    .select('id, data_hora, valor, conta_como, categoria_id, pessoa_id, previsto, descricao, observacao, serie, compromisso_id, parcela, total_parcelas, partes(categoria_id, pessoa_id, valor)')
     .gte('data_hora', de.toISOString()).lt('data_hora', ate.toISOString());
   if (error) throw error;
   const { data: prim } = await sb.from('lancamentos').select('data_hora').eq('previsto', false).order('data_hora').limit(1);
@@ -1023,6 +1023,45 @@ function porcoesAnalise(lancs, comPrevisto) {
     else out.push({ d, l, valor: Number(l.valor), cat: l.categoria_id, pessoa: l.pessoa_id });
   }
   return out;
+}
+
+/** Explica o semáforo do mês: a conta, o que ainda vai cair e onde mais saiu. */
+function abrirMotivoMes({ entrou, saiu, prev, fim, mesAtual, previstos, doMesReais }) {
+  const abrirL = async (id) => {
+    const r = await sb.from('lancamentos').select('*, partes(*), abastecimentos(*), comprovantes(id)').eq('id', id).single();
+    if (r.error) return toast('Não abriu: ' + erroMsg(r.error), 4000);
+    abrirLanc(r.data);
+  };
+  const grupoDe = (l) => l.compromisso_id ? 'Compromissos' : (l.serie || '').startsWith('rec:') ? 'Assinaturas'
+    : (l.total_parcelas > 1 || (l.serie || '').startsWith('parc:')) ? 'Parcelas de cartão' : 'Outros previstos';
+  const blocos = [];
+  for (const g of ['Compromissos', 'Parcelas de cartão', 'Assinaturas', 'Outros previstos']) {
+    const itens = previstos.filter((l) => grupoDe(l) === g).sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
+    if (!itens.length) continue;
+    const tot = itens.reduce((s, l) => s + Number(l.valor), 0);
+    blocos.push(h('div', { class: 'card', style: 'gap:0;padding:6px 14px' },
+      h('div', { class: 'lin', style: 'padding:8px 0 4px' }, h('b', {}, g), h('b', {}, R(tot))),
+      itens.map((l) => h('button', { class: 'item', style: 'border:none;border-top:1px solid #EEF0ED;border-radius:0;padding:10px 0;box-shadow:none;background:none', onclick: () => abrirL(l.id) },
+        h('div', { class: 'itemcorpo' },
+          h('div', { class: 't' }, h('span', { class: 'n' }, l.descricao || 'Previsto'), h('span', { class: 'v' }, R(l.valor))),
+          h('div', { class: 'd' }, `dia ${dataCurta(l.data_hora)}${l.total_parcelas > 1 ? ` · parcela ${l.parcela}/${l.total_parcelas}` : ''}${l.observacao ? ` · “${l.observacao}”` : ''}`))))));
+  }
+  const porCat = {};
+  for (const x of doMesReais) porCat[x.cat || 0] = (porCat[x.cat || 0] || 0) + x.valor;
+  const top = Object.entries(porCat).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const frase = `Entraram ${R(entrou)}, já saíram ${R(saiu)}` + (prev ? ` e ainda vão cair ${R(prev)}` : '') + '. '
+    + (fim < 0 ? `Faltam ${R(-fim)} para fechar o mês.` : `${mesAtual ? 'Devem sobrar' : 'Sobraram'} ${R(fim)}.`);
+  abrirSheet(h('h3', {}, fim < 0 ? 'Por que o mês fecha no vermelho' : 'Como fica o mês'),
+    h('div', { class: 'card', style: `background:${fim < 0 ? '#FDECEA' : '#E6F4EA'};box-shadow:none` }, h('b', { style: 'font-size:16px;line-height:1.4' }, frase),
+      h('div', { class: 'nota' }, 'A conta usa só o dinheiro que já entrou nas contas.')),
+    blocos.length ? h('h2', { style: 'margin:6px 2px 0' }, 'Ainda vai cair') : h('div', { class: 'nota' }, 'Nada previsto para cair até o fim do mês.'),
+    ...blocos,
+    top.length ? h('h2', { style: 'margin:6px 2px 0' }, 'Onde mais saiu este mês') : null,
+    top.length ? h('div', { class: 'card', style: 'gap:0;padding:6px 14px' }, top.map(([cat, v]) => h('button', { class: 'item',
+      style: 'border:none;border-top:1px solid #EEF0ED;border-radius:0;padding:10px 0;box-shadow:none;background:none',
+      onclick: () => { if (Number(cat)) { fecharSheet(); st.analiseCat = Number(cat); render(); window.scrollTo(0, 0); } } },
+      h('div', { class: 'itemcorpo' }, h('div', { class: 't' }, h('span', { class: 'n' }, nomeCat(Number(cat)) || 'A categorizar'), h('span', { class: 'v' }, R(v))),
+        h('div', { class: 'd' }, `${Math.round((v / Math.max(saiu, 1)) * 100)}% do que já saiu`))))) : null);
 }
 
 async function telaAnalise(wrap) {
@@ -1066,7 +1105,10 @@ async function telaAnalise(wrap) {
       h('div', { style: `width:${(Math.min(saiu, tot) / tot) * 100}%;background:var(--verde)` }),
       h('div', { class: 'listra', style: `width:${(Math.min(prev, Math.max(tot - saiu, 0)) / tot) * 100}%` }),
       fim < 0 ? h('div', { style: `width:${(Math.min(-fim, tot) / tot) * 100}%;background:var(--erro)` }) : null),
-    h('div', { class: 'nota' }, 'Azul: já gasto · listrado: previsto · vermelho: o que passa do que entrou. Entradas: só o que o app marca como entrada; transferências entre suas contas não contam.')));
+    h('div', { class: 'nota' }, 'Azul: já gasto · listrado: previsto · vermelho: o que passa do que entrou. Entradas: só o que o app marca como entrada; transferências entre suas contas não contam.'),
+    h('button', { class: 'btn sec', style: 'min-height:44px', onclick: () => abrirMotivoMes({ entrou, saiu, prev, fim, mesAtual,
+      previstos: lancs.filter((l) => l.previsto && l.conta_como === 'Gasto' && chaveMes(new Date(l.data_hora)) === chaveMes(st.mes)),
+      doMesReais: doMes(reais, st.mes) }) }, fim < 0 ? 'Por que fecha no vermelho? ›' : 'Ver o que compõe a conta ›')));
 
   // 2) Mês a mês
   const meses = [];
