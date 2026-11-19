@@ -45,7 +45,7 @@ const R = (v) => moeda.format(Number(v) || 0);
 const num = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function inicioDoMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function addMes(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-const VERSAO_TELAS = 'v38';
+const VERSAO_TELAS = 'v39';
 const nomeMes = (d) => d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
 const dataCurta = (s) => new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ });
 const hora = (s) => new Date(s).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
@@ -242,7 +242,7 @@ function navegacao() {
     svg.setAttribute('aria-hidden', 'true');
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', ICONES[id]); svg.append(p);
     nav.append(h('button', { class: st.aba === id ? 'on' : '', 'aria-current': st.aba === id ? 'page' : null,
-      onclick: () => { st.aba = id; st.filtroCat = null; st.analiseCat = null; st.analiseFin = null; st.analiseIR = null; st.busca = ''; render(); window.scrollTo(0, 0); } }, svg, rot));
+      onclick: () => { st.aba = id; st.filtroCat = null; st.analiseCat = null; st.analiseFin = null; st.analiseIR = null; st.analiseExt = null; st.busca = ''; render(); window.scrollTo(0, 0); } }, svg, rot));
   }
   return nav;
 }
@@ -1136,6 +1136,7 @@ async function telaAnalise(wrap) {
   const { lancs, inicio } = await dadosAnalise();
   if (st.analiseIR) return telaIR(wrap);
   if (st.analiseFin) return telaFinanciamento(wrap);
+  if (st.analiseExt) return telaExtratos(wrap);
   if (st.analiseCat) return telaAnaliseCategoria(wrap, lancs, inicio);
   const hoje = new Date();
   const mesAtual = st.mes.getFullYear() === hoje.getFullYear() && st.mes.getMonth() === hoje.getMonth();
@@ -1249,10 +1250,148 @@ async function telaAnalise(wrap) {
     }
   } catch {}
 
+  // Extratos das contas
+  corpo.append(h('button', { class: 'card fin-mini', onclick: () => { st.analiseExt = true; render(); window.scrollTo(0, 0); } },
+    h('div', { class: 'lin' }, h('h2', {}, 'Extratos das contas'), h('span', { class: 'v', 'aria-hidden': 'true' }, '›')),
+    h('div', { class: 'nota' }, 'Extrato de cada conta, direto dos bancos, em PDF ou planilha. Útil quando o banco não deixa exportar.')));
+
   // 5) Planilha
   const btnPl = h('button', { class: 'btn sec', onclick: () => baixarPlanilha(btnPl) }, 'Baixar planilha (Excel)');
   corpo.append(h('div', { class: 'card' }, h('h2', {}, 'Planilha'), btnPl,
     h('div', { class: 'nota' }, 'Todos os lançamentos (desde o início) com data, data da compra, categoria, pessoa, banco, valor, observação e partes da divisão. Para analisar no computador.')));
+}
+
+
+// ----- Extratos das contas (lidos na hora, direto dos bancos) -----
+const brlTxt = (v) => (v < 0 ? '-' : '') + 'R$ ' + Math.abs(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+async function carregarScript(src) {
+  await new Promise((ok, erro) => { const sc = document.createElement('script'); sc.src = src; sc.onload = ok; sc.onerror = () => erro(new Error('não carregou o gerador')); document.head.append(sc); });
+}
+async function telaExtratos(wrap) {
+  wrap.append(h('div', { class: 'cab' },
+    h('button', { class: 'voltar', onclick: () => { st.analiseExt = null; render(); } }, '‹ Análise'),
+    h('h1', {}, 'Extratos das contas'),
+    h('span', { class: 'sub' }, 'Direto dos bancos, pela mesma conexão do app')));
+  const corpo = h('div', { class: 'corpo' });
+  wrap.append(corpo);
+  const r = await sb.from('contas_banco').select('id, banco, tipo, numero, nome').eq('ignorar', false).order('banco');
+  const contas = (r.data || []).filter((c) => c.tipo === 'BANK' || c.tipo === 'CREDIT');
+  const marcadas = new Set(contas.filter((c) => c.tipo === 'BANK').map((c) => c.id));
+  const hoje = new Date();
+  const ini = (d) => isoD(new Date(d.getFullYear(), d.getMonth(), 1));
+  const fimMes = (d) => isoD(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+  const PER = [
+    ['Este mês', () => [ini(hoje), isoD(hoje)]],
+    ['Mês passado', () => { const m = addMes(inicioDoMes(hoje), -1); return [ini(m), fimMes(m)]; }],
+    ['Últimos 3 meses', () => [ini(addMes(inicioDoMes(hoje), -2)), isoD(hoje)]],
+    ['Escolher datas', null]];
+  let per = 2;
+  const de = h('input', { type: 'date', id: 'ext-de', value: PER[2][1]()[0] }), ate = h('input', { type: 'date', id: 'ext-ate', value: isoD(hoje) });
+  const datas = h('div', { class: 'grade2' }, h('label', { class: 'campo' }, 'De', de), h('label', { class: 'campo' }, 'Até', ate));
+  datas.hidden = true;
+  const chipsPer = h('div', { class: 'chips' }, PER.map(([nome], i) => {
+    const b = h('button', { type: 'button', class: 'chip' + (i === per ? ' on' : ''), 'aria-pressed': String(i === per) }, nome);
+    b.onclick = () => { per = i; chipsPer.querySelectorAll('.chip').forEach((x, j) => { x.classList.toggle('on', j === i); x.setAttribute('aria-pressed', String(j === i)); });
+      datas.hidden = i !== 3; if (PER[i][1]) { const [a, z] = PER[i][1](); de.value = a; ate.value = z; } };
+    return b;
+  }));
+  const chipsContas = h('div', { class: 'chips' }, contas.map((c) => {
+    const nome = `${c.banco} ${c.tipo === 'CREDIT' ? 'cartão ' + c.numero : 'conta ' + String(c.numero || '').replace(/^0+/, '')}`;
+    const b = h('button', { type: 'button', class: 'chip' + (marcadas.has(c.id) ? ' on' : ''), 'aria-pressed': String(marcadas.has(c.id)) }, nome);
+    b.onclick = () => { if (marcadas.has(c.id)) marcadas.delete(c.id); else marcadas.add(c.id); b.classList.toggle('on', marcadas.has(c.id)); b.setAttribute('aria-pressed', String(marcadas.has(c.id))); };
+    return b;
+  }));
+  const msg = h('div', { class: 'nota', role: 'status' });
+  const resultado = h('div', { style: 'display:flex;flex-direction:column;gap:12px' });
+  const gerar = h('button', { class: 'btn', onclick: async () => {
+    if (!marcadas.size) return toast('Marque pelo menos uma conta.');
+    if (!de.value || !ate.value || de.value > ate.value) return toast('Confira as datas: "De" tem que vir antes de "Até".');
+    gerar.disabled = true; msg.textContent = 'Buscando nos bancos… pode levar até um minuto.'; resultado.replaceChildren();
+    try {
+      const { data: ss } = await sb.auth.getSession();
+      const sel = contas.filter((c) => marcadas.has(c.id));
+      const resp = await fetch(SB_URL + '/functions/v1/extrato', { method: 'POST',
+        headers: { 'content-type': 'application/json', apikey: SB_KEY, authorization: 'Bearer ' + ss.session.access_token },
+        body: JSON.stringify({ desde: de.value, ate: ate.value, contas: sel.map((c) => c.id), tipos: [...new Set(sel.map((c) => c.tipo))] }) });
+      const d = await resp.json();
+      if (!resp.ok || d.erro) throw new Error(d.erro || 'o banco não respondeu');
+      msg.textContent = '';
+      mostrarExtrato(resultado, d);
+    } catch (e) { msg.textContent = 'Não deu para gerar: ' + erroMsg(e) + '. Tente de novo em alguns minutos.'; }
+    gerar.disabled = false;
+  } }, 'Gerar extrato');
+  corpo.append(h('div', { class: 'card', style: 'gap:12px' },
+    h('div', { class: 'campo' }, 'Período', chipsPer), datas,
+    h('div', { class: 'campo' }, 'Contas', chipsContas),
+    gerar, msg,
+    h('div', { class: 'nota' }, 'O extrato traz os mesmos movimentos do banco, mas não substitui o extrato oficial para quem exigir o documento do banco.')), resultado);
+}
+function mostrarExtrato(resultado, d) {
+  const contas = d.contas.filter((c) => !c.erro);
+  const falhas = d.contas.filter((c) => c.erro);
+  const periodo = `${dataBR(d.desde)} a ${dataBR(d.ate)}`;
+  const nomeConta = (c) => `${c.banco} ${c.tipo === 'CREDIT' ? 'cartão' : 'conta'} ${c.agencia_conta || c.numero}`;
+  const pdf = h('button', { class: 'btn', onclick: async () => {
+    pdf.disabled = true;
+    try {
+      if (!window.jspdf) { await carregarScript('vendor/jspdf-2.5.1.umd.min.js'); await carregarScript('vendor/jspdf-autotable-3.8.2.min.js'); }
+      const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+      const verde = [15, 118, 110];
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(...verde); doc.text('Extrato das contas', 14, 18);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(90); doc.text(`Período de ${periodo}`, 14, 24);
+      doc.autoTable({ startY: 30, head: [['Conta', 'Saldo inicial', 'Entradas', 'Saídas', 'Saldo final']],
+        body: contas.map((c) => { const ent = c.movimentos.filter((m) => m.valor > 0).reduce((s, m) => s + m.valor, 0), sai = c.movimentos.filter((m) => m.valor < 0).reduce((s, m) => s + m.valor, 0);
+          return [nomeConta(c), brlTxt(c.saldo_inicial), brlTxt(ent), brlTxt(sai), brlTxt(c.saldo_final)]; }),
+        styles: { fontSize: 8.5 }, headStyles: { fillColor: [226, 241, 239], textColor: 20 }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } } });
+      for (const c of contas) {
+        doc.addPage();
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(...verde); doc.text(nomeConta(c), 14, 18);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(90); doc.text(periodo, 14, 24);
+        const linhas = [[{ content: '' }, { content: 'Saldo anterior', styles: { fontStyle: 'bold' } }, '', brlTxt(c.saldo_inicial)]];
+        let mes = null, ent = 0, sai = 0;
+        const total = () => linhas.push([{ content: `Total de ${new Date(mes + '-15T12:00:00').toLocaleDateString('pt-BR', { month: 'long' })}: entradas ${brlTxt(ent)} · saídas ${brlTxt(sai)}`, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [226, 241, 239] } }]);
+        for (const m of c.movimentos) {
+          if (mes && m.data.slice(0, 7) !== mes) { total(); ent = sai = 0; }
+          mes = m.data.slice(0, 7); if (m.valor > 0) ent += m.valor; else sai += m.valor;
+          linhas.push([dataBR(m.data).slice(0, 5), m.descricao || '-', { content: brlTxt(m.valor), styles: { textColor: m.valor > 0 ? [21, 128, 61] : [180, 35, 24] } }, brlTxt(m.saldo)]);
+        }
+        if (mes) total();
+        linhas.push(['', { content: `Saldo em ${dataBR(d.ate)}`, styles: { fontStyle: 'bold' } }, '', brlTxt(c.saldo_final)]);
+        doc.autoTable({ startY: 30, head: [['Data', 'Descrição', 'Valor', 'Saldo']], body: linhas, styles: { fontSize: 8, cellPadding: 1.6 },
+          headStyles: { fillColor: verde }, columnStyles: { 0: { cellWidth: 14 }, 2: { halign: 'right', cellWidth: 30 }, 3: { halign: 'right', cellWidth: 30 } } });
+      }
+      const n = doc.getNumberOfPages();
+      for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(7); doc.setTextColor(110);
+        doc.text(`Gerado pelo Mutirão em ${new Date().toLocaleString('pt-BR')}, com os dados enviados pelos bancos (Open Finance). Não substitui o extrato oficial.`, 14, 290);
+        doc.text(`página ${i} de ${n}`, 196, 290, { align: 'right' }); }
+      await entregarArquivo(doc.output('blob'), `Extrato ${d.desde} a ${d.ate}.pdf`);
+    } catch (e) { toast('Não gerou o PDF: ' + erroMsg(e), 4000); }
+    pdf.disabled = false;
+  } }, 'Baixar PDF');
+  const xls = h('button', { class: 'btn sec', onclick: async () => {
+    xls.disabled = true;
+    try {
+      await carregarXLSX();
+      const wb = window.XLSX.utils.book_new();
+      for (const c of contas) {
+        const linhas = [['Data', 'Descrição', 'Valor', 'Saldo'], ['', 'Saldo anterior', '', c.saldo_inicial],
+          ...c.movimentos.map((m) => [dataBR(m.data), m.descricao, m.valor, m.saldo]), ['', `Saldo em ${dataBR(d.ate)}`, '', c.saldo_final]];
+        const ws = window.XLSX.utils.aoa_to_sheet(linhas); ws['!cols'] = [{ wch: 11 }, { wch: 60 }, { wch: 14 }, { wch: 14 }];
+        window.XLSX.utils.book_append_sheet(wb, ws, `${c.banco} ${String(c.numero).slice(-6)}`.replace(/[\\/?*[\]:]/g, '').slice(0, 31));
+      }
+      const buf = window.XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      await entregarArquivo(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Extrato ${d.desde} a ${d.ate}.xlsx`);
+    } catch (e) { toast('Não gerou a planilha: ' + erroMsg(e), 4000); }
+    xls.disabled = false;
+  } }, 'Baixar planilha');
+  resultado.replaceChildren(
+    h('div', { class: 'card', style: 'gap:8px' }, h('h2', {}, `Extrato de ${periodo}`),
+      ...contas.map((c) => h('div', { class: 'lin', style: 'border-top:1px solid #EEF0ED;padding-top:8px' },
+        h('div', {}, h('b', {}, nomeConta(c)), h('div', { class: 'nota' }, `${c.movimentos.length} movimento(s) · saldo inicial ${R(c.saldo_inicial)}`)),
+        h('b', { style: 'white-space:nowrap' }, R(c.saldo_final)))),
+      falhas.length ? h('div', { class: 'nota', style: 'color:var(--ambar)' }, `Não veio: ${falhas.map((c) => c.banco).join(', ')}. Tente de novo mais tarde.`) : null,
+      h('div', { class: 'btns' }, pdf, xls),
+      h('div', { class: 'nota' }, 'Saldos calculados a partir do saldo atual que cada banco informa. Movimentos pendentes no banco não aparecem.')));
 }
 
 // ----- Imposto de Renda -----
@@ -2363,6 +2502,7 @@ window.voltarApp = () => {
   if (!document.getElementById('sheet').hidden) { fecharSheet(); return true; }
   if (st.cad && st.aba === 'analise' && st.analiseIR) { st.analiseIR = null; render(); return true; }
   if (st.cad && st.aba === 'analise' && st.analiseFin) { st.analiseFin = null; render(); return true; }
+  if (st.cad && st.aba === 'analise' && st.analiseExt) { st.analiseExt = null; render(); return true; }
   if (st.cad && st.aba === 'analise' && st.analiseCat) { st.analiseCat = null; render(); return true; }
   if (st.cad && st.aba !== 'inicio') { st.aba = 'inicio'; render(); return true; }
   return false;
